@@ -70,8 +70,9 @@ public:
 
 	bool readPm25(uint16_t &pm2_5)
 	{
+		uint16_t value;
 		if (m_pm1006.read_pm25(&m_pm2_5)) {
-			LOG_PRINTF("PM2.5 = %u\n", m_pm2_5);
+			LOG_PRINTF("PM2.5 concentration: %u µg/m³\n", m_pm2_5);
 			pm2_5 = m_pm2_5;
 			return true;
 		} else {
@@ -79,6 +80,15 @@ public:
 			Display::instance().alert(PM_LED);
 			pm2_5 = 0;
 			return false;
+		}
+	}
+
+	void executeAtomically(std::function<void(void)> fn, int time = portMAX_DELAY)
+	{
+		if (xSemaphoreTakeRecursive(m_mutex, time) == pdTRUE) {
+			if (fn)
+				fn();
+			xSemaphoreGiveRecursive(m_mutex);
 		}
 	}
 
@@ -102,25 +112,23 @@ public:
 	bool lastSensorData(uint16_t &pm2_5, float &temperature, float &humidity, uint16_t &co2)
 	{
 		bool ret = false;
-		if (xSemaphoreTake(m_mutex, (TickType_t)5) == pdTRUE) {
+		executeAtomically([&]{
 			pm2_5 = m_pm2_5;
 			temperature = m_temperature;
 			humidity = m_humidity;
 			co2 = m_co2;
 			ret = true;
-			xSemaphoreGive(m_mutex);
-		}
+		});
 		return ret;
 	}
 #else
 	bool lastSensorData(uint16_t &pm2_5)
 	{
 		bool ret = false;
-		if (xSemaphoreTake(m_mutex, (TickType_t)5) == pdTRUE) {
+		executeAtomically([&]{
 			pm2_5 = m_pm2_5;
 			ret = true;
-			xSemaphoreGive(m_mutex);
-		}
+		});
 		return ret;
 	}
 #endif
@@ -145,12 +153,13 @@ void sensorTask(void * parameter)
 	g_ctx.initScd4x();
 #endif
 
-	while (1) {
+	digitalWrite(PIN_FAN, HIGH);
+	LOG_PRINTF("Fan ON\n");
 
-		// turn on the fan for 30 seconds
-		digitalWrite(PIN_FAN, HIGH);
-		LOG_PRINTF("Fan ON\n");
-		delay(30000);
+	// give 10 seconds for initial measurement
+	delay(10000);
+
+	while (1) {
 
 		//
 		// read data from sensors
@@ -170,10 +179,6 @@ void sensorTask(void * parameter)
 
 		g_ctx.readCo2(temperature, humidity, co2);
 #endif
-
-		// turn off the fan
-		digitalWrite(PIN_FAN, LOW);
-		LOG_PRINTF("Fan OFF\n");
 
 		//
 		// show PM readings on the led
@@ -257,10 +262,10 @@ void sensorTask(void * parameter)
 		Display::instance().fadeColors(pmColor, humColor, co2Color, 16);
 
 		//
-		// wait 30 seconds
+		// wait 10 seconds and read data again
 		//
 
-		longDelay(30000);
+		longDelay(10000);
 	}
 }
 

@@ -1,5 +1,12 @@
 #include <Arduino.h>
-#include <Adafruit_NeoPixel.h>
+
+#ifdef USE_ADAFRUIT_NEOPIXEL
+#else
+extern "C" {
+#include "ws2812_control.h"
+}
+#endif
+
 #include <Preferences.h>
 
 #include "display.h"
@@ -24,7 +31,11 @@ private:
 	SemaphoreHandle_t m_mutex;
 
 	// rgb leds
+#if USE_ADAFRUIT_NEOPIXEL
 	static Adafruit_NeoPixel m_rgbWS;
+#else
+	struct led_state m_ledState;
+#endif
 	uint32_t m_colors[NUM_LEDS] = {0};
 	uint8_t m_brightness;
 
@@ -115,7 +126,9 @@ private:
 
 public:
 
+#if USE_ADAFRUIT_NEOPIXEL
 	Adafruit_NeoPixel& rgbWs() { return m_rgbWS; }
+#endif
 
 	DisplayImpl()
 	{
@@ -142,13 +155,21 @@ public:
 	bool init()
 	{
 		// WS2718 init
+		ws2812_control_init();
+
+#if USE_ADAFRUIT_NEOPIXEL
 		m_rgbWS.begin();
 		m_rgbWS.setBrightness(m_brightness);
 		m_rgbWS.setPixelColor(PM_LED, 0);
 		m_rgbWS.setPixelColor(HUM_LED, 0);
 		m_rgbWS.setPixelColor(CO2_LED, 0);
 		m_rgbWS.show();
-
+#else
+		m_ledState.leds[0] = 0;
+		m_ledState.leds[1] = 0;
+		m_ledState.leds[2] = 0;
+		ws2812_write_leds(m_ledState);
+#endif
 		return true;
 	}
 
@@ -158,8 +179,13 @@ public:
 			if (id < NUM_LEDS)
 				m_colors[id] = rgb;
 
-			m_rgbWS.setPixelColor(id, rgb);
-			m_rgbWS.show();
+#if USE_ADAFRUIT_NEOPIXEL
+		m_rgbWS.setPixelColor(id, rgb);
+		m_rgbWS.show();
+#else
+		m_ledState.leds[id] = mixColors(0, rgb, m_brightness / 256.0);
+		ws2812_write_leds(m_ledState);
+#endif
 		});
 	}
 
@@ -170,6 +196,7 @@ public:
 			m_colors[HUM_LED] = led2;
 			m_colors[CO2_LED] = led3;
 
+#if USE_ADAFRUIT_NEOPIXEL
 			if (brightness >= 0)
 				m_rgbWS.setBrightness(brightness);
 
@@ -178,7 +205,23 @@ public:
 			m_rgbWS.setPixelColor(CO2_LED, led3);
 
 			m_rgbWS.show();
+#else
+			m_ledState.leds[PM_LED] = mixColors(0, led1, m_brightness / 256.0);
+			m_ledState.leds[HUM_LED] = mixColors(0, led2, m_brightness / 256.0);
+			m_ledState.leds[CO2_LED] = mixColors(0, led3, m_brightness / 256.0);
+			ws2812_write_leds(m_ledState);
+#endif
 		});
+	}
+
+	static uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
+	{
+#if USE_ADAFRUIT_NEOPIXEL
+		return Adafruit_NeoPixel::Color(r1, g1, b1)
+#else
+		// GRB
+		return ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
+#endif
 	}
 
 	uint32_t getColor(unsigned int id)
@@ -214,7 +257,7 @@ public:
 		g1 = CLAMP(0, 255, g1);
 		b1 = CLAMP(0, 255, b1);
 
-		return Adafruit_NeoPixel::Color(r1, g1, b1);
+		return Color(r1, g1, b1);
 	}
 
 	void setLedBrightness(const uint8_t &brightness)
@@ -274,7 +317,12 @@ public:
 
 		executeAtomically([=]{
 			int i = 0;
+#if USE_ADAFRUIT_NEOPIXEL
 			m_rgbWS.setBrightness(BRIGHTNESS);
+#else
+			int oldBrightness = m_brightness;
+			m_brightness = BRIGHTNESS;
+#endif
 			while (1) {
 				if (i > 10) {
 					break;
@@ -287,6 +335,10 @@ public:
 				delay(200);
 				i++;
 			}
+
+#if (USE_ADAFRUIT_NEOPIXEL == 0)
+			m_brightness = oldBrightness;
+#endif
 		});
 	}
 
@@ -294,11 +346,19 @@ public:
 	{
 		switch (color) {
 		case eColorRed:
-			return Adafruit_NeoPixel::Color(255, 0, 0);
+#if USE_ADAFRUIT_NEOPIXEL
+			return Color(255, 0, 0);
+#else
+			return Color(0, 255, 0);
+#endif
 		case eColorGreen:
-			return Adafruit_NeoPixel::Color(0, 255, 0);
+#if USE_ADAFRUIT_NEOPIXEL
+			return Color(0, 255, 0);
+#else
+			return Color(255, 0, 0);
+#endif
 		case eColorBlue:
-			return Adafruit_NeoPixel::Color(0, 0, 255);
+			return Color(0, 0, 255);
 		default:
 			return 0;
 		}
@@ -312,4 +372,6 @@ Display &Display::instance()
 	return instance;
 }
 
+#if USE_ADAFRUIT_NEOPIXEL
 Adafruit_NeoPixel DisplayImpl::m_rgbWS = Adafruit_NeoPixel(3, PIN_LED, NEO_GRB + NEO_KHZ800);
+#endif

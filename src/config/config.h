@@ -77,7 +77,14 @@
 #define PM_LED		0
 #define HUM_LED		1
 #define CO2_LED 	2
+
+// set to 1 to use adafruit neopixel library
+#define USE_ADAFRUIT_NEOPIXEL 0
+
+#if USE_ADAFRUIT_NEOPIXEL
 #define NUM_LEDS 	3
+#endif
+
 
 //
 // Preferences ID (limited to 15 characters)

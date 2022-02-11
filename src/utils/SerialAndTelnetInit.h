@@ -15,7 +15,7 @@ public:
 		// create semaphore for watchdog
 		m_mutex = xSemaphoreCreateMutex();
 
-		SerialAndTelnet.setWelcomeMsg((char *)"CarbonDioxide server by Embedded Softworks, s.r.o.\n\n");
+		SerialAndTelnet.setWelcomeMsg((char *)"IKEA VINDRIKTNING + SCD41 server by Embedded Softworks, s.r.o.\n\n");
 		SerialAndTelnet.setCallbackOnConnect([]{
 			SERIAL.println("Telnet connection established.");
 		});

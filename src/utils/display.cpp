@@ -56,7 +56,7 @@ private:
 
 				// fade in/out one led segment
 				for (int j = 0; j <= 32; j++) {
-					uint32_t rgb =  utils::HSVtoRGB(120, 100, j * BRIGHTNESS / 32);
+					uint32_t rgb = utils::HSVtoRGB(120, 100, j * BRIGHTNESS / 32);
 					setColor(rgb, i);
 					delay(10);
 
@@ -66,7 +66,8 @@ private:
 				}
 
 				for (int j = 32; j >= 0; j--) {
-					uint32_t rgb =  utils::HSVtoRGB(120, 100, j * BRIGHTNESS / 32);
+					uint32_t rgb = utils::HSVtoRGB(120, 100, j * BRIGHTNESS / 32);
+
 					setColor(rgb, i);
 					delay(10);
 
@@ -206,22 +207,18 @@ public:
 
 			m_rgbWS.show();
 #else
-			m_ledState.leds[PM_LED] = mixColors(0, led1, m_brightness / 256.0);
-			m_ledState.leds[HUM_LED] = mixColors(0, led2, m_brightness / 256.0);
-			m_ledState.leds[CO2_LED] = mixColors(0, led3, m_brightness / 256.0);
+			if (brightness >= 0) {
+				m_ledState.leds[PM_LED] = mixColors(0, led1, brightness / 256.0);
+				m_ledState.leds[HUM_LED] = mixColors(0, led2, brightness / 256.0);
+				m_ledState.leds[CO2_LED] = mixColors(0, led3, brightness / 256.0);
+			} else {
+				m_ledState.leds[PM_LED] = mixColors(0, led1, m_brightness / 256.0);
+				m_ledState.leds[HUM_LED] = mixColors(0, led2, m_brightness / 256.0);
+				m_ledState.leds[CO2_LED] = mixColors(0, led3, m_brightness / 256.0);
+			}
 			ws2812_write_leds(m_ledState);
 #endif
 		});
-	}
-
-	static uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
-	{
-#if USE_ADAFRUIT_NEOPIXEL
-		return Adafruit_NeoPixel::Color(r1, g1, b1)
-#else
-		// GRB
-		return ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
-#endif
 	}
 
 	uint32_t getColor(unsigned int id)
@@ -241,23 +238,27 @@ public:
 			ratio = 1.0;
 		}
 
-		uint8_t r1 = (c1 & 0xFF0000) >> 16;
-		uint8_t g1 = (c1 & 0x00FF00) >> 8;
-		uint8_t b1 = (c1 & 0x0000FF) >> 0;
+		uint8_t w1 = (c1 & 0xFF000000) >> 24;
+		uint8_t r1 = (c1 & 0x00FF0000) >> 16;
+		uint8_t g1 = (c1 & 0x0000FF00) >> 8;
+		uint8_t b1 = (c1 & 0x000000FF) >> 0;
 
-		uint8_t r2 = (c2 & 0xFF0000) >> 16;
-		uint8_t g2 = (c2 & 0x00FF00) >> 8;
-		uint8_t b2 = (c2 & 0x0000FF) >> 0;
+		uint8_t w2 = (c2 & 0xFF000000) >> 24;
+		uint8_t r2 = (c2 & 0x00FF0000) >> 16;
+		uint8_t g2 = (c2 & 0x0000FF00) >> 8;
+		uint8_t b2 = (c2 & 0x000000FF) >> 0;
 
+		w1 = w1 + (w2 - w1) * ratio;
 		r1 = r1 + (r2 - r1) * ratio;
 		g1 = g1 + (g2 - g1) * ratio;
 		b1 = b1 + (b2 - b1) * ratio;
 
+		w1 = CLAMP(0, 255, w1);
 		r1 = CLAMP(0, 255, r1);
 		g1 = CLAMP(0, 255, g1);
 		b1 = CLAMP(0, 255, b1);
 
-		return Color(r1, g1, b1);
+		return ((uint32_t)w1 << 24) | ((uint32_t)r1 << 16) | ((uint32_t)g1 << 8) | ((uint32_t)b1 << 0);
 	}
 
 	void setLedBrightness(const uint8_t &brightness)
@@ -346,19 +347,11 @@ public:
 	{
 		switch (color) {
 		case eColorRed:
-#if USE_ADAFRUIT_NEOPIXEL
-			return Color(255, 0, 0);
-#else
-			return Color(0, 255, 0);
-#endif
+			return utils::Color(255, 0, 0);
 		case eColorGreen:
-#if USE_ADAFRUIT_NEOPIXEL
-			return Color(0, 255, 0);
-#else
-			return Color(255, 0, 0);
-#endif
+			return utils::Color(0, 255, 0);
 		case eColorBlue:
-			return Color(0, 0, 255);
+			return utils::Color(0, 0, 255);
 		default:
 			return 0;
 		}

@@ -70,7 +70,6 @@ public:
 
 	bool readPm25(uint16_t &pm2_5)
 	{
-		uint16_t value;
 		if (m_pm1006.read_pm25(&m_pm2_5)) {
 			LOG_PRINTF("PM2.5 concentration: %u µg/m³\n", m_pm2_5);
 			pm2_5 = m_pm2_5;

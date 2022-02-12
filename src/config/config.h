@@ -85,6 +85,8 @@
 #define NUM_LEDS 	3
 #endif
 
+// set to 1 to enable HTTP api to debug led colors
+#define DEBUG_LEDS 0
 
 //
 // Preferences ID (limited to 15 characters)

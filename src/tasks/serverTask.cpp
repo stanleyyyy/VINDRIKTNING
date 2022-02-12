@@ -54,6 +54,12 @@ void indexHandler(RequestContext& request)
 	"Click <a href=\"/rssi\">here</a> to get RSSI<br><br>"
 	"Click <a href=\"/led/100\">here</a> to set LED brightness to 100<br>"
 	"Click <a href=\"/led/0\">here</a> to set LED brightness to 0<br>"
+#if DEBUG_LEDS
+	"Click <a href=\"/ledColor/4278190080\">here</a> to set LED color to 0xFF000000<br>"
+	"Click <a href=\"/ledColor/16711680\">here</a> to set LED color to 0x00FF0000<br>"
+	"Click <a href=\"/ledColor/65280\">here</a> to set LED color to 0x0000FF00<br>"
+	"Click <a href=\"/ledColor/255\">here</a> to set LED color to 0x000000FF<br>"
+#endif
 	"Click <a href=\"/reboot\">here</a> to reboot the device<br>";
 
 	request.response.sendRaw(200, "text/html", body);
@@ -201,6 +207,14 @@ void configureHandler(RequestContext& request)
 			Display::instance().setLedBrightness(value);
 			request.response.json["led"] = value;
 		}
+#if DEBUG_LEDS
+		else if (opParamStr == "ledColor") {
+			int value = atoi(valParam);
+			LOG_PRINTF("LED color value: %d\n", value);
+			Display::instance().setColor(value, PM_LED);
+			request.response.json["led"] = value;
+		}
+#endif
 	}
 
 	// add time parameter

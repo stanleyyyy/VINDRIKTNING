@@ -2,22 +2,16 @@
 #include <ArduinoOTA.h>
 #include "otaTask.h"
 
-#include "../utils/utils.h"
-#include "../utils/watchdog.h"
-#include "../tasks/wifiTask.h"
+#include "utils.h"
+#include "watchdog.h"
+#include "wifiTask.h"
 
 void otaTask(void * parameter)
 {
 	LOG_PRINTF("Starting OTA task\n");
 
 	// wait until the network is connected
-	while (1) {
-		if (wifiIsConnected()){
-			break;
-		}
-		delay(100);
-	}
-
+	wifiWaitForConnection();
 	LOG_PRINTF("WiFi available, initializing OTA service\n");
 
 	//
@@ -56,6 +50,12 @@ void otaTask(void * parameter)
 			else if (error == OTA_END_ERROR) LOG_PRINTF("End Failed\n");
 		});
 
+	String hostName = wifiHostName();
+	char bufhostname[hostName.length() + 1] = {0};
+	memcpy(bufhostname, hostName.c_str(), hostName.length());
+
+	ArduinoOTA.setHostname(bufhostname);
+	ArduinoOTA.setMdnsEnabled(true);
 	ArduinoOTA.begin();
 
 	while (1) {

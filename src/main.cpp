@@ -16,6 +16,13 @@ void setup()
 	// init serial/telnet
 	SerialAndTelnetInit::init();
 
+	//
+	// make sure wifi is initialized before calling anything else
+	//
+
+	WiFi.mode(WIFI_MODE_STA);
+	WiFi.setSleep(false);
+
 	// init watchdog
 	watchdogInit();
 
@@ -61,6 +68,16 @@ void setup()
 		NULL,			 // Task handle
 		ARDUINO_RUNNING_CORE);
 
+	//
+	// wait for connection
+	//
+
+	wifiWaitForConnection();
+
+	//
+	// now start the server task and NTP task
+	//
+
 	xTaskCreatePinnedToCore(
 		serverTask,
 		"serverTask",	 // Task name
@@ -84,9 +101,10 @@ void setup()
 		NULL  // Task handle
 	);
 #endif
+
 }
 
 void loop()
 {
-	delay(50);
+	delay(500);
 }

@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
-#include "../utils/utils.h"
-#include "../config/config.h"
+#include "utils.h"
+#include "config.h"
 #include "ntpTask.h"
 #include "../tasks/wifiTask.h"
 
@@ -16,14 +16,10 @@ static uint32_t g_lastEpochMillis = 0;
 
 void fetchTimeFromNTP(void * parameter)
 {
+	// wait until the network is connected
+	wifiWaitForConnection();
+
 	while (1) {
-
-		// wait until the network is connected
-		if (!wifiIsConnected()){
-			delay(100);
-			continue;
-		}
-
 		LOG_PRINTF("[NTP] Updating...\n");
 		timeClient.update();
 

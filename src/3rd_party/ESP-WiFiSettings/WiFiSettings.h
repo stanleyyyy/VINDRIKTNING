@@ -14,6 +14,7 @@ class WiFiSettingsClass {
         void begin();
         bool connect(bool portal = true, int wait_seconds = 30);
         void portal();
+        bool forceApMode(bool clearCredentials = false);
         String string(const String& name, const String& init = "", const String& label = "");
         String string(const String& name, unsigned int max_length, const String& init = "", const String& label = "");
         String string(const String& name, unsigned int min_length, unsigned int max_length, const String& init = "", const String& label = "");
@@ -39,7 +40,7 @@ class WiFiSettingsClass {
         TCallbackString onUserAgent;
         TCallback onConfigSaved;
         TCallback onRestart;
-        TCallback onPortalWaitLoop;
+        TCallbackReturnsInt onPortalWaitLoop;
     private:
         bool begun;
 };

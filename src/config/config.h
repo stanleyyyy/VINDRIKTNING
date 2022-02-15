@@ -15,13 +15,7 @@
  * the ESP goes into deep sleep for 30seconds to try and
  * recover.
  */
-#define WIFI_TIMEOUT 20000 // 20 seconds
-
-/**
- * How long should we wait after a failed WiFi connection
- * before trying to set one up again.
- */
-#define WIFI_RECOVER_TIME_MS 20000 // 20 seconds
+#define WIFI_TIMEOUT 10 // 10 seconds
 
 /**
  * Syncing time with an NTP server
@@ -96,8 +90,10 @@
 
 // Check which core Arduino is running on. This is done because updating the 
 // display only works from the Arduino core.
+#ifndef ARDUINO_RUNNING_CORE
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
 #else
 #define ARDUINO_RUNNING_CORE 1
+#endif
 #endif

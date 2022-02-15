@@ -26,7 +26,8 @@ struct Texts {
 };
 
 #if \
-   !defined LANGUAGE_EN \
+   !defined LANGUAGE_SK \
+&& !defined LANGUAGE_EN \
 && !defined LANGUAGE_NL \
 && !defined LANGUAGE_DE
     #define LANGUAGE_ALL
@@ -43,6 +44,9 @@ std::map<const String, const String> languages {
 #if defined LANGUAGE_NL || defined LANGUAGE_ALL
     { "nl", "Nederlands" },
 #endif
+#if defined LANGUAGE_SK || defined LANGUAGE_ALL
+    { "sk", "Slovensky" },
+#endif
 };
 
 bool available(const String& language) {
@@ -55,9 +59,31 @@ bool multiple() {
 
 bool select(Texts& T, String& language) {
     if (! available(language)) {
-        if (available("en")) language = "en";
+        if (available("sk")) language = "sk";
         else language = languages.begin()->first;
     }
+
+#if defined LANGUAGE_SK || defined LANGUAGE_ALL
+    if (language == "sk") {
+        T.title = F("Konfigurácia");
+        T.portal_wpa = F("Ochrana konfiguračného portálu WiFi heslom");
+        T.portal_password = F("WiFi heslo pre konfiguračný portál");
+        T.init = "pôvodné";
+        T.wait = F("Čakajte prosím...");
+        T.bye = F("Dovidenia!");
+        T.error_fs = F("Chyba pri zápise do EEPROM.");
+        T.button_save = F("Aplikovať");
+        T.button_restart = F("Reštartovať zariadenie");
+        T.scanning_short = F("Skenujem...");
+        T.scanning_long = F("Skenujem WiFi siete...");
+        T.rescan = F("preskenovať");
+        T.dot1x = F("(chyba: 802.1x siete nie sú podporované)");
+        T.ssid = F("Názov WiFi siete (SSID)");
+        T.wifi_password = F("WiFi heslo");
+        T.language = F("Jazyk");
+        return true;
+    }
+#endif
 
 #if defined LANGUAGE_EN || defined LANGUAGE_ALL
     if (language == "en") {

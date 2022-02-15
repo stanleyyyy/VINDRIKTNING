@@ -1,8 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
-#include "../config/config.h"
-#include "../utils/utils.h"
+#include "config.h"
+#include "utils.h"
 #include "../tasks/wifiTask.h"
 
 class SerialAndTelnetInit {
@@ -15,7 +15,11 @@ public:
 		// create semaphore for watchdog
 		m_mutex = xSemaphoreCreateMutex();
 
+#if USE_CO2_SENSOR
 		SerialAndTelnet.setWelcomeMsg((char *)"IKEA VINDRIKTNING + SCD41 server by Embedded Softworks, s.r.o.\n\n");
+#else
+		SerialAndTelnet.setWelcomeMsg((char *)"IKEA VINDRIKTNING server by Embedded Softworks, s.r.o.\n\n");
+#endif
 		SerialAndTelnet.setCallbackOnConnect([]{
 			SERIAL.println("Telnet connection established.");
 		});
@@ -30,13 +34,10 @@ public:
 		// create task that will wait until Wifi is initialized and then handle all Telnet traffic
 		xTaskCreate(
 			[](void * parameter) {
-				while (1) {
-					// wait until the network is connected
-					if (!wifiIsConnected()){
-						delay(100);
-						continue;
-					}
+				// wait until the network is connected
+				wifiWaitForConnection();
 
+				while (1) {
 					// handle telnet
 					SerialAndTelnet.handle();
 					delay(50);

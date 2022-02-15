@@ -1,6 +1,6 @@
 #include <Adafruit_NeoPixel.h>
-#include "../config/config.h"
-#include "../utils/utils.h"
+#include "config.h"
+#include "utils.h"
 #include "hsvToRgb.h"
 
 namespace utils {

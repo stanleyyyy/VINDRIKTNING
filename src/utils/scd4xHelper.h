@@ -2,9 +2,9 @@
 
 #include <Arduino.h>
 
-#include "../config/config.h"
-#include "../utils/utils.h"
-#include "../utils/watchdog.h"
+#include "config.h"
+#include "utils.h"
+#include "watchdog.h"
 
 #if (USE_CO2_SENSOR == 1)
 

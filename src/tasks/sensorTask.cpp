@@ -2,19 +2,18 @@
 #include <Adafruit_NeoPixel.h>
 #include <SensirionI2CScd4x.h>
 #include <Wire.h>
-#include <Preferences.h>
 
 #include "sensorTask.h"
 #include "../3rd_party/pm1006/pm1006.h"
 
-#include "../config/config.h"
-#include "../utils/utils.h"
-#include "../utils/watchdog.h"
-#include "../utils/hsvToRgb.h"
-#include "../utils/display.h"
+#include "config.h"
+#include "utils.h"
+#include "watchdog.h"
+#include "hsvToRgb.h"
+#include "display.h"
 
 #if (USE_CO2_SENSOR == 1)
-#include "../utils/scd4xHelper.h"
+#include "scd4xHelper.h"
 #endif
 
 #define CLAMP(min, max, val) ((val < min) ? min : ((val > max) ? max : val))
@@ -25,8 +24,6 @@
 
 class Context {
 private:
-	// preferences object
-	Preferences m_preferences;
 
 	// synchronization mutex
 	SemaphoreHandle_t m_mutex;

@@ -1,4 +1,6 @@
 #include "WiFiSettings.h"
+#include "utils.h"
+
 #ifdef ESP32
     #define ESPFS SPIFFS
     #define ESPMAC (Sprintf("%06" PRIx64, ESP.getEfuseMac() >> 24))
@@ -244,12 +246,12 @@ void WiFiSettingsClass::portal() {
         WiFi.disconnect(true);
     #endif
 
-    Serial.println(F("Starting access point for configuration portal."));
+    LOG_PRINTF("%s\n", F("Starting access point for configuration portal."));
     if (secure && password.length()) {
-        Serial.printf("SSID: '%s', Password: '%s'\n", hostname.c_str(), password.c_str());
+        LOG_PRINTF("SSID: '%s', Password: '%s'\n", hostname.c_str(), password.c_str());
         WiFi.softAP(hostname.c_str(), password.c_str());
     } else {
-        Serial.printf("SSID: '%s'\n", hostname.c_str());
+        LOG_PRINTF("SSID: '%s'\n", hostname.c_str());
         WiFi.softAP(hostname.c_str());
     }
     delay(500);
@@ -258,7 +260,7 @@ void WiFiSettingsClass::portal() {
 
     if (onPortal) onPortal();
     String ip = WiFi.softAPIP().toString();
-    Serial.println(ip);
+    LOG_PRINTF("IP Address = %s\n", ip.c_str());
 
     auto redirect = [&http, &ip]() {
         // iPhone doesn't deal well with redirects to http://hostname/ and
@@ -322,8 +324,7 @@ void WiFiSettingsClass::portal() {
         // Don't waste time scanning in captive portal detection (Apple)
         if (interactive) {
             if (num_networks < 0) num_networks = WiFi.scanNetworks();
-            Serial.print(num_networks, DEC);
-            Serial.println(F(" WiFi networks found."));
+            LOG_PRINTF("%d %s\n", num_networks, F(" WiFi networks found.\n"));
         }
 
         http.sendContent(F(
@@ -444,9 +445,35 @@ void WiFiSettingsClass::portal() {
     for (;;) {
         http.handleClient();
         dns.processNextRequest();
-        if (onPortalWaitLoop) onPortalWaitLoop();
         esp_task_wdt_reset();
-        delay(1);
+        delay(onPortalWaitLoop ? onPortalWaitLoop() : 100);
+    }
+}
+
+bool WiFiSettingsClass::forceApMode(bool clearCredentials)
+{
+    // remove credentials
+    if (clearCredentials) {
+        if (! spurt("/wifi-ssid", "")) {
+            LOG_PRINTF("Failed to clear SSID\n");
+        } else {
+            LOG_PRINTF("SSID cleared\n");
+        }
+
+        if (! spurt("/wifi-password", "")) {
+            LOG_PRINTF("Failed to clear password\n");
+        } else {
+            LOG_PRINTF("Password cleared\n");
+        }
+    }
+
+    // force ap mode
+    if (! spurt("/force-ap", "true")) {
+        LOG_PRINTF("Failed to force AP mode\n");
+        return false;
+    } else {
+        LOG_PRINTF("AP mode forced\n");
+        return true;
     }
 }
 
@@ -457,14 +484,25 @@ bool WiFiSettingsClass::connect(bool portal, int wait_seconds) {
 
     String ssid = slurp("/wifi-ssid");
     String pw = slurp("/wifi-password");
-    if (ssid.length() == 0) {
-        Serial.println(F("First contact!\n"));
+    String forceAp = slurp("/force-ap");
+
+    if ((ssid.length() == 0) || forceAp.length()) {
+
+        if (forceAp.length()) {
+            // clear force-ap flag
+            if (! spurt("/force-ap", "")) {
+                LOG_PRINTF("Failed to clear force AP mode flag!\n");
+            } else {
+                LOG_PRINTF("Starting AP mode\n");
+            }
+        } else {
+            LOG_PRINTF("%s\n", F("First contact!\n"));
+        }
         this->portal();
     }
 
-    Serial.print(F("Connecting to WiFi SSID "));
-    Serial.print(ssid);
     if (onConnect) onConnect();
+    LOG_PRINTF("Connecting to WiFi SSID '%s'", ssid.c_str());
 
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);  // arduino-esp32 #2537
     WiFi.setHostname(hostname.c_str());
@@ -472,18 +510,19 @@ bool WiFiSettingsClass::connect(bool portal, int wait_seconds) {
 
     unsigned long starttime = millis();
     while (WiFi.status() != WL_CONNECTED && (wait_seconds < 0 || (millis() - starttime) < (unsigned)wait_seconds * 1000)) {
-        Serial.print(".");
+        SERIAL.print(".");
         delay(onWaitLoop ? onWaitLoop() : 100);
     }
+    SERIAL.print("\n");
 
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println(F(" failed."));
+        LOG_PRINTF("Connection to SSID '%s' failed!\n", ssid.c_str());
         if (onFailure) onFailure();
         if (portal) this->portal();
         return false;
     }
 
-    Serial.println(WiFi.localIP().toString());
+    LOG_PRINTF("IP address: %s\n", WiFi.localIP().toString().c_str());
     if (onSuccess) onSuccess();
     return true;
 }

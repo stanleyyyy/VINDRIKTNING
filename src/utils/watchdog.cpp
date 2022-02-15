@@ -1,13 +1,14 @@
 #include <Arduino.h>
 #include "watchdog.h"
-#include "../config/config.h"
-#include "../utils/utils.h"
-#include "../utils/display.h"
+#include "config.h"
+#include "utils.h"
+#include "display.h"
 
 static SemaphoreHandle_t mutex = NULL;
 static uint32_t periodicResetTs = 0;
 static uint32_t watchdogResetTs = 0;
 static bool watchdogReboot = false;
+static bool watchdogEnabled = true;
 
 void watchdogTask(void *pvParameters __attribute__((unused)))
 {
@@ -27,7 +28,7 @@ void watchdogTask(void *pvParameters __attribute__((unused)))
 			ESP.restart();
 		}
 
-		if (diffMs > WATCHDOG_TIMEOUT){
+		if ((diffMs > WATCHDOG_TIMEOUT) && watchdogEnabled) {
 			LOG_PRINTF("Watchddog timeout elapsed, resetting the board!\n");
 			uint32_t red = Display::instance().rgbColor(Display::eColorRed);
 			Display::instance().fadeColors(red, red, red, 16);
@@ -37,7 +38,7 @@ void watchdogTask(void *pvParameters __attribute__((unused)))
 
 		uint32_t periodicResetDiff = millis() - periodicResetTs;
 
-		if (periodicResetDiff > PERIODIC_RESET_TIMEOUT) {
+		if ((periodicResetDiff > PERIODIC_RESET_TIMEOUT) && watchdogEnabled) {
 			LOG_PRINTF("Periodic reset!\n");
 			uint32_t red = Display::instance().rgbColor(Display::eColorRed);
 			Display::instance().fadeColors(red, red, red, 16);
@@ -74,6 +75,20 @@ void watchdogReset()
 	if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
 		if (!watchdogReboot)
 			watchdogResetTs = millis();
+		xSemaphoreGive(mutex);
+	}
+}
+
+void watchdogEnable(const bool &enable)
+{
+	if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
+		watchdogEnabled = enable;
+
+		// if re-enabled, reset it
+		if (enable) {
+			if (!watchdogReboot)
+				watchdogResetTs = millis();
+		}
 		xSemaphoreGive(mutex);
 	}
 }

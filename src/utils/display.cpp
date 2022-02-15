@@ -11,10 +11,10 @@ extern "C" {
 
 #include "display.h"
 
-#include "../config/config.h"
-#include "../utils/utils.h"
-#include "../utils/watchdog.h"
-#include "../utils/hsvToRgb.h"
+#include "config.h"
+#include "utils.h"
+#include "watchdog.h"
+#include "hsvToRgb.h"
 
 #define CLAMP(min, max, val) ((val < min) ? min : ((val > max) ? max : val))
 

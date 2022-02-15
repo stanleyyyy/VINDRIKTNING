@@ -2,8 +2,8 @@
 
 #include <stdarg.h>
 #include "utils.h"
-#include "../config/config.h"
-#include "../utils/SerialAndTelnetInit.h"
+#include "config.h"
+#include "SerialAndTelnetInit.h"
 #include "../tasks/ntpTask.h"
 
 #define LOG_SIZE_MAX 512

@@ -14,6 +14,10 @@
 
 #if (USE_CO2_SENSOR == 1)
 #include "scd4xHelper.h"
+#elif (USE_ENV_SENSOR == 1)
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include "UNIT_ENV.h"
 #endif
 
 #define CLAMP(min, max, val) ((val < min) ? min : ((val > max) ? max : val))
@@ -33,25 +37,55 @@ private:
 
 #if (USE_CO2_SENSOR == 1)
 	Scd4xHelper m_scd4x;
+	uint16_t m_co2;
+#elif (USE_ENV_SENSOR == 1)
+	// temp/humidity sensor
+	SHT3X m_sht30;
+	// pressure sensor
+	QMP6988 m_qmp6988;
+	float m_pressure;
+#endif
+#if (USE_CO2_SENSOR == 1) || (USE_ENV_SENSOR == 1)
 	float m_temperature;
 	float m_humidity;
-	uint16_t m_co2;
 #endif
 	uint16_t m_pm2_5;
 
 public:
 	Context()
-#if (USE_CO2_SENSOR == 1)
-	: m_temperature(0)
-	, m_humidity(0)
-	, m_co2(0)
-	, m_pm2_5(0)
-#else
-	: m_pm2_5(0)
-#endif
 	{
+#if (USE_CO2_SENSOR == 1)
+		m_co2 = 0;
+#endif
+#if (USE_ENV_SENSOR == 1)
+		m_pressure = 0;
+#endif
+
+#if (USE_CO2_SENSOR == 1) || (USE_ENV_SENSOR == 1)
+		m_temperature = 0;
+		m_humidity = 0;
+#endif
+		m_pm2_5 = 0;
+
 		// create semaphore for watchdog
 		m_mutex = xSemaphoreCreateMutex();
+	}
+
+	void init()
+	{
+#if (USE_CO2_SENSOR == 1)
+		initScd4x();
+#endif
+
+#if (USE_ENV_SENSOR == 1)
+		// initialize i2c
+		Wire.begin(SDA, SCL);
+
+		// init pressure sensor
+		if (!m_qmp6988.init()) {
+			LOG_PRINTF("QMP6988 sensor failed to initialize!\n");
+		}
+#endif
 	}
 
 	PM1006& pm1006() { return m_pm1006; }
@@ -117,6 +151,40 @@ public:
 		});
 		return ret;
 	}
+#elif (USE_ENV_SENSOR == 1)
+	bool readEnv(float &temperature, float &humidity, float &pressure)
+	{
+		// get pressure in kPa
+		pressure = m_pressure = m_qmp6988.calcPressure() / 1000.0;
+
+		if (m_sht30.get() == 0){
+			temperature = m_temperature = m_sht30.cTemp;
+			humidity = m_humidity = m_sht30.humidity;
+
+			LOG_PRINTF("Pressure: %f kPa\n", pressure);
+			LOG_PRINTF("Temperature: %f °C\n", temperature);
+			LOG_PRINTF("Humidity: %f %%\n", humidity);
+			return true;
+		} else {
+			LOG_PRINTF("Failed to read temperature/humidity data!\n");
+			temperature = 0;
+			humidity = 0;
+			return false;
+		}
+	}
+
+	bool lastSensorData(uint16_t &pm2_5, float &temperature, float &humidity, float &pressure)
+	{
+		bool ret = false;
+		executeAtomically([&]{
+			pm2_5 = m_pm2_5;
+			temperature = m_temperature;
+			humidity = m_humidity;
+			pressure = m_pressure;
+			ret = true;
+		});
+		return ret;
+	}
 #else
 	bool lastSensorData(uint16_t &pm2_5)
 	{
@@ -145,9 +213,8 @@ void sensorTask(void * parameter)
 	// initialize UART to access the PM1006 sensor
 	Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
 
-#if (USE_CO2_SENSOR == 1)
-	g_ctx.initScd4x();
-#endif
+	// init context
+	g_ctx.init();
 
 	digitalWrite(PIN_FAN, HIGH);
 	LOG_PRINTF("Fan ON\n");
@@ -174,6 +241,11 @@ void sensorTask(void * parameter)
 		float humidity;
 
 		g_ctx.readCo2(temperature, humidity, co2);
+#elif (USE_ENV_SENSOR == 1)
+		float temperature;
+		float humidity;
+		float pressure;
+		g_ctx.readEnv(temperature, humidity, pressure);
 #endif
 
 		//
@@ -249,6 +321,30 @@ void sensorTask(void * parameter)
 
 			humColor = utils::HSVtoRGB(h, 100, BRIGHTNESS);
 		}
+#elif (USE_ENV_SENSOR == 1)
+		//
+		// show humidity readings on the led
+		//
+
+		LOG_PRINTF("Pressure: %f kPa, temperature = %f C, humidity = %f %%\n", pressure, temperature, humidity);
+
+		//
+		// convert humidity from <0;100> to HSV values
+		//   0% -> 180 degrees HSV (aqua)
+		//  50% -> 120 degrees HSV (green)
+		// 100% ->   0 degrees HSV (red)
+		//
+
+		{
+			float h;
+			if (humidity < 50) {
+				h = 180.0 - (180.0 - 120.0) * humidity / 50.0;
+			} else {
+				h = 120.0 * (1.0 - (humidity - 50.0) / 50.0);
+			}
+
+			humColor = utils::HSVtoRGB(h, 100, BRIGHTNESS);
+		}
 #endif
 
 		//
@@ -270,6 +366,11 @@ void sensorTask(void * parameter)
 bool lastSensorData(uint16_t &pm2_5, float &temperature, float &humidity, uint16_t &co2)
 {
 	return g_ctx.lastSensorData(pm2_5, temperature, humidity, co2);
+}
+#elif (USE_ENV_SENSOR == 1)
+bool lastSensorData(uint16_t &pm2_5, float &temperature, float &humidity, float &pressure)
+{
+	return g_ctx.lastSensorData(pm2_5, temperature, humidity, pressure);
 }
 #else
 bool lastSensorData(uint16_t &pm2_5)

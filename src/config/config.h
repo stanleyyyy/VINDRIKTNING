@@ -8,7 +8,12 @@
 /**
  * Set this to 1 if you have SensirionI2CScd4x CO2 sensor
  */
-#define USE_CO2_SENSOR	1
+#define USE_CO2_SENSOR	0
+
+/**
+ * Set this to 1 if you have M5Stack ENV III sensor
+ */
+#define USE_ENV_SENSOR	1
 
 /**
  * Timeout for the WiFi connection. When this is reached,

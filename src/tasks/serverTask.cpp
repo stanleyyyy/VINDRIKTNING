@@ -49,6 +49,8 @@ void indexHandler(RequestContext& request)
 	"<html>\n"
 #if USE_CO2_SENSOR
 	"<title>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</title>\n"
+#elif (USE_ENV_SENSOR == 1)
+	"<title>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</title>\n"
 #else
 	"<title>IKEA VINDRIKTNING server</title>\n"
 #endif
@@ -64,16 +66,23 @@ void indexHandler(RequestContext& request)
 	"<body>\n"
 #if USE_CO2_SENSOR
 	"<h2>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</h2>\n"
+#elif (USE_ENV_SENSOR == 1)
+	"<h2>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</h2>\n"
 #else
 	"<h2>IKEA VINDRIKTNING server</h2>\n"
 #endif
-	"(c) 2022 Embedded Softworks, s.r.o. <br>"
+	"(c) 2022 Embedded Softworks, s.r.o."
 #if USE_CO2_SENSOR
-	"<br>"
+	"<br><br>"
 	"LEDS (from bottom up): pm2.5, humidity, CO2"
-	"<br>"
-#endif
 	"<br>";
+#elif (USE_ENV_SENSOR == 1)
+	"<br><br>"
+	"LEDS (from bottom up): pm2.5, humidity"
+	"<br>";
+#else
+	"<br>";
+#endif
 
 	uint16_t pm2_5 = 0;
 #if (USE_CO2_SENSOR == 1)
@@ -81,19 +90,41 @@ void indexHandler(RequestContext& request)
 	float humidity = 0;
 	uint16_t co2 = 0;
 	if (lastSensorData(pm2_5, temperature, humidity, co2)) {
-		body += "PM2.5 value: " + pm2_5 + " µg/m³<br>";
-		body += "Temperature: " + String(temperature) + " C<br>";
-		body += "Humidity: " + String(humidity) + " %<br>";
-		body += "CO2 level: " + String(co2) + " ppm<br><br>";
+		body += "<br>";
+		body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
+		body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
+		body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
+		body += "<b>CO2 level:</b> " + String(co2) + " ppm<br>";
+		body += "<br>";
+	}
+#elif (USE_ENV_SENSOR == 1)
+	float temperature = 0;
+	float humidity = 0;
+	float pressure = 0;
+	if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
+		body += "<br>";
+		body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
+		body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
+		body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
+		body += "<b>Pressure:</b> " + String(pressure) + " kPa<br>";
+		body += "<br>";
 	}
 #else
 	if (lastSensorData(pm2_5)) {
-		body += "<b>PM2.5 value: " + String(pm2_5) + " µg/m³</b><br><br>";
+		body += "<br>";
+		body += "<b>PM2.5 value: " + String(pm2_5) + " µg/m³</b><br>";
+		body += "<br>";
 	}
 #endif
 
 	body +=
-	"Click <a href=\"/get\">here</a> to retrieve co2, temperature and humidity readings<br>"
+#if (USE_CO2_SENSOR == 1)
+	"Click <a href=\"/get\">here</a> to retrieve PM2.5, co2, temperature and humidity readings<br>"
+#elif (USE_ENV_SENSOR == 1)
+	"Click <a href=\"/get\">here</a> to retrieve PM2.5, temperature, humidity and pressure readings<br>"
+#else
+	"Click <a href=\"/get\">here</a> to retrieve PM2.5 readings<br>"
+#endif
 	"Click <a href=\"/rssi\">here</a> to get RSSI<br><br>"
 	"Click <a href=\"/led/100\">here</a> to set LED brightness to 100<br>"
 	"Click <a href=\"/led/10\">here</a> to set LED brightness to 10<br>"
@@ -191,6 +222,21 @@ void getHandler(RequestContext& request)
 		request.response.json["pm2_5"] = pm2_5;
 	} else {
 		request.response.json["co2"] = 0;
+		request.response.json["temperature"] = 0;
+		request.response.json["humidity"] = 0;
+		request.response.json["pm2_5"] = 0;
+	}
+#elif (USE_ENV_SENSOR == 1)
+	float temperature = 0;
+	float humidity = 0;
+	float pressure = 0;
+	if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
+		request.response.json["pressure"] = pressure;
+		request.response.json["temperature"] = temperature;
+		request.response.json["humidity"] = humidity;
+		request.response.json["pm2_5"] = pm2_5;
+	} else {
+		request.response.json["pressure"] = 0;
 		request.response.json["temperature"] = 0;
 		request.response.json["humidity"] = 0;
 		request.response.json["pm2_5"] = 0;

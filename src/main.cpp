@@ -13,15 +13,16 @@
 
 void setup()
 {
-	// init serial/telnet
-	SerialAndTelnetInit::init();
-
 	//
 	// make sure wifi is initialized before calling anything else
 	//
 
+	WiFi.mode(WIFI_OFF);
 	WiFi.mode(WIFI_MODE_STA);
 	WiFi.setSleep(false);
+
+	// init serial/telnet
+	SerialAndTelnetInit::init();
 
 	// init watchdog
 	watchdogInit();

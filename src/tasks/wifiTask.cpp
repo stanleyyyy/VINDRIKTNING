@@ -4,58 +4,17 @@
 #include "utils.h"
 #include "watchdog.h"
 
-#include "wifiTask.h"
-
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiMulti.h>
 #include <ESPmDNS.h>
 #include <SPIFFS.h>
+#include "wifiTask.h"
+#include "display.h"
+#include "hsvToRgb.h"
 
-//
-// Configuration
-//
-
-#define ESPASYNC_WIFIMGR_DEBUG_PORT SERIAL
-#define _ESPASYNC_WIFIMGR_LOGLEVEL_ 2		// Use from 0 to 4. Higher number, more debugging messages and memory usage.
-#define DOUBLERESETDETECTOR_DEBUG true		// double reset detector enabled
-#define DRD_TIMEOUT 10						// Number of seconds after reset during which a subseqent reset will be considered a double reset.
-#define DRD_ADDRESS 0						// RTC Memory Address for the DoubleResetDetector to use
-#define HEARTBEAT_INTERVAL 10000
-#define MIN_AP_PASSWORD_SIZE 8
-#define SSID_MAX_LEN 32
-#define PASS_MAX_LEN 64
-#define WIFICHECK_INTERVAL 1000L
-#define NUM_WIFI_CREDENTIALS 1
-#define CONFIG_FILENAME F("/wifi_cred.dat")
-#define USING_CORS_FEATURE false
-#define USE_DHCP_IP true
-#define USE_CONFIGURABLE_DNS true
-#define USE_CUSTOM_AP_IP false
-#define ESP_DRD_USE_SPIFFS true
-#define HOST_NAME_LEN 40
-#define HTTP_PORT 80
-
-#if ESP32
-	// For ESP32, this better be 0 to shorten the connect time.
-	// For ESP32-S2/C3, must be > 500
-	#if (USING_ESP32_S2 || USING_ESP32_C3)
-		#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 500L
-	#else
-		// For ESP32 core v1.0.6, must be >= 500
-		#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 800L
-	#endif
-#else
-	// For ESP8266, this better be 2200 to enable connect the 1st time
-	#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 2200L
-#endif
-
-#define WIFI_MULTI_CONNECT_WAITING_MS 500L
-
-// this has to be included AFTER we specified configuration properties above!
 #include <ESPAsync_WiFiManager.h>
 #include <ESP_DoubleResetDetector.h>
-
 typedef struct {
 	char wifi_ssid[SSID_MAX_LEN];
 	char wifi_pw[PASS_MAX_LEN];
@@ -67,7 +26,6 @@ typedef struct {
 	bool m_forceAp;
 	uint16_t m_checksum;
 } WM_config;
-
 
 class WifiContext {
 public:
@@ -87,7 +45,9 @@ public:
 	String m_routerSSID;
 	String m_routerPassword;
 
+#if (!USING_ESP32_S2 && !USING_ESP32_C3)
 	DNSServer m_dnsServer;
+#endif
 
 	// Indicates whether ESP has WiFi credentials saved from previous session, or double reset detected
 	bool m_initialConfig;
@@ -444,6 +404,11 @@ public:
 		ESPAsync_wifiManager.addParameter(&customHostName);
 
 		if (m_initialConfig) {
+
+			// show orange color indicating we are in setup mode
+			uint32_t color = utils::HSVtoRGB(30, 100, BRIGHTNESS);
+			Display::instance().fadeColors(color, color, color, 16);
+
 			#if USE_CUSTOM_AP_IP
 			LOG_PRINTF("Starting configuration portal @%s\n", APStaticIP);
 			#else

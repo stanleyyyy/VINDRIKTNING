@@ -30,7 +30,47 @@
 #define NTP_OFFSET_SECONDS 3600
 #define NTP_UPDATE_INTERVAL_MS (5 * 60 * 1000)
 
+
+/**
+ * Wifi related settings
+ */
+
+#define ESPASYNC_WIFIMGR_DEBUG_PORT SERIAL
+#define _ESPASYNC_WIFIMGR_LOGLEVEL_ 2		// Use from 0 to 4. Higher number, more debugging messages and memory usage.
+#define DOUBLERESETDETECTOR_DEBUG true		// double reset detector enabled
+#define DRD_TIMEOUT 10						// Number of seconds after reset during which a subseqent reset will be considered a double reset.
+#define DRD_ADDRESS 0						// RTC Memory Address for the DoubleResetDetector to use
+#define HEARTBEAT_INTERVAL 10000
+#define MIN_AP_PASSWORD_SIZE 8
+#define SSID_MAX_LEN 32
+#define PASS_MAX_LEN 64
+#define WIFICHECK_INTERVAL 1000L
+#define NUM_WIFI_CREDENTIALS 1
+#define CONFIG_FILENAME F("/wifi_cred.dat")
+#define USING_CORS_FEATURE false
+#define USE_DHCP_IP true
+#define USE_CONFIGURABLE_DNS true
+#define USE_CUSTOM_AP_IP false
+#define ESP_DRD_USE_SPIFFS true
 #define DEFAULT_HOST_NAME "ESP32-VINDRIKTNING"
+#define HOST_NAME_LEN 40
+#define HTTP_PORT 80
+
+#if ESP32
+	// For ESP32, this better be 0 to shorten the connect time.
+	// For ESP32-S2/C3, must be > 500
+	#if (USING_ESP32_S2 || USING_ESP32_C3)
+		#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 500L
+	#else
+		// For ESP32 core v1.0.6, must be >= 500
+		#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 800L
+	#endif
+#else
+	// For ESP8266, this better be 2200 to enable connect the 1st time
+	#define WIFI_MULTI_1ST_CONNECT_WAITING_MS 2200L
+#endif
+
+#define WIFI_MULTI_CONNECT_WAITING_MS 500L
 
 //
 // debug uart speed

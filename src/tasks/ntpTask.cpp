@@ -24,7 +24,7 @@ void fetchTimeFromNTP(void * parameter)
 		timeClient.update();
 
 		// atomically update last epoch time and millis() reference
-		if (xSemaphoreTake(g_mutex, (TickType_t)5) == pdTRUE) {
+		if (xSemaphoreTake(g_mutex, portMAX_DELAY) == pdTRUE) {
 			g_lastEpochTime = timeClient.getEpochTime();
 			g_lastEpochMillis = millis();
 			xSemaphoreGive(g_mutex);
@@ -44,7 +44,7 @@ uint64_t compensatedMillis()
 	unsigned long lastEpochTime = 0;
 	uint32_t lastEpochMillis;
 
-	if (xSemaphoreTake(g_mutex, (TickType_t)5) == pdTRUE) {
+	if (xSemaphoreTake(g_mutex, portMAX_DELAY) == pdTRUE) {
 		lastEpochTime = g_lastEpochTime;
 		lastEpochMillis = g_lastEpochMillis;
 		xSemaphoreGive(g_mutex);

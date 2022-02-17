@@ -15,7 +15,7 @@ void watchdogTask(void *pvParameters __attribute__((unused)))
 	while (1) {
 
 		uint32_t diffMs = 0;
-		if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
+		if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE) {
 			diffMs = millis() - watchdogResetTs;
 			xSemaphoreGive(mutex);
 		}
@@ -72,7 +72,7 @@ void watchdogInit()
 
 void watchdogReset()
 {
-	if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
+	if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE) {
 		if (!watchdogReboot)
 			watchdogResetTs = millis();
 		xSemaphoreGive(mutex);
@@ -81,7 +81,7 @@ void watchdogReset()
 
 void watchdogEnable(const bool &enable)
 {
-	if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
+	if (xSemaphoreTake(mutex, portMAX_DELAY ) == pdTRUE) {
 		watchdogEnabled = enable;
 
 		// if re-enabled, reset it
@@ -95,7 +95,7 @@ void watchdogEnable(const bool &enable)
 
 void watchdogScheduleReboot()
 {
-	if (xSemaphoreTake(mutex, (TickType_t)5) == pdTRUE) {
+	if (xSemaphoreTake(mutex, portMAX_DELAY) == pdTRUE) {
 		watchdogReboot = true;
 		xSemaphoreGive(mutex);
 	}

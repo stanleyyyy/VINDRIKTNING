@@ -53,7 +53,7 @@ public:
 
 	static bool lock()
 	{
-		if (xSemaphoreTake(m_mutex, (TickType_t)50) == pdTRUE)
+		if (xSemaphoreTake(m_mutex, portMAX_DELAY) == pdTRUE)
 			return true;
 
 		return false;

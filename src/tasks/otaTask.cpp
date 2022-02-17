@@ -50,11 +50,7 @@ void otaTask(void * parameter)
 			else if (error == OTA_END_ERROR) LOG_PRINTF("End Failed\n");
 		});
 
-	String hostName = wifiHostName();
-	char bufhostname[hostName.length() + 1] = {0};
-	memcpy(bufhostname, hostName.c_str(), hostName.length());
-
-	ArduinoOTA.setHostname(bufhostname);
+	ArduinoOTA.setHostname(wifiHostName().c_str());
 	ArduinoOTA.setMdnsEnabled(true);
 	ArduinoOTA.begin();
 

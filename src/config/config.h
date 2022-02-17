@@ -30,6 +30,8 @@
 #define NTP_OFFSET_SECONDS 3600
 #define NTP_UPDATE_INTERVAL_MS (5 * 60 * 1000)
 
+#define DEFAULT_HOST_NAME "ESP32-VINDRIKTNING"
+
 //
 // debug uart speed
 //

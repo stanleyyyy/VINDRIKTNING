@@ -2,6 +2,8 @@
 
 #include "WebServer.h"
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+#include <ESPmDNS.h>
 
 #include "WiFi.h"
 #include "config.h"
@@ -15,381 +17,347 @@
 #include "serverTask.h"
 #include "ntpTask.h"
 
-// this needs PathVariableHandlers library
-#include <UrlTokenBindings.h>
-#include <RichHttpServer.h>
+#define OUTPUT_JSON_BUFFER_SIZE 512
 
-using namespace std::placeholders;
-
-using RichHttpConfig = RichHttp::Generics::Configs::AsyncWebServer;
-using RequestContext = RichHttpConfig::RequestContextType;
-
-class Context {
+class ServerTaskCtx {
+private:
+	bool m_shutdownServer;
 public:
-	// http server
-	SimpleAuthProvider m_authProvider;
-	RichHttpServer<RichHttpConfig> m_server;
-
-	Context()
-		: m_server(80, m_authProvider)
+	ServerTaskCtx()
 	{
-	}
-};
-
-static Context g_ctx;
-
-//
-// HTTP handlers
-//
-
-void indexHandler(RequestContext& request)
-{
-	String body =
-	"<!DOCTYPE html>\n"
-	"<html>\n"
-#if USE_CO2_SENSOR
-	"<title>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</title>\n"
-#elif (USE_ENV_SENSOR == 1)
-	"<title>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</title>\n"
-#else
-	"<title>IKEA VINDRIKTNING server</title>\n"
-#endif
-	"<meta charset=\"UTF-8\">\n"
-	"<meta http-equiv=\"refresh\" content=\"5\">\n"
-	"<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n"
-	"<style>\n"
-	"html { font-family: Helvetica; display: inline-block; margin: 10px auto}\n"
-	"body{margin-top: 0px;} h1 {color: #444444;margin: 50px auto 30px;}\n"
-	"p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n"
-	"</style>\n"
-	"</head>\n"
-	"<body>\n"
-#if USE_CO2_SENSOR
-	"<h2>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</h2>\n"
-#elif (USE_ENV_SENSOR == 1)
-	"<h2>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</h2>\n"
-#else
-	"<h2>IKEA VINDRIKTNING server</h2>\n"
-#endif
-	"(c) 2022 Embedded Softworks, s.r.o."
-#if USE_CO2_SENSOR
-	"<br><br>"
-	"LEDS (from bottom up): pm2.5, humidity, CO2"
-	"<br>";
-#elif (USE_ENV_SENSOR == 1)
-	"<br><br>"
-	"LEDS (from bottom up): pm2.5, humidity"
-	"<br>";
-#else
-	"<br>";
-#endif
-
-	uint16_t pm2_5 = 0;
-#if (USE_CO2_SENSOR == 1)
-	float temperature = 0;
-	float humidity = 0;
-	uint16_t co2 = 0;
-	if (lastSensorData(pm2_5, temperature, humidity, co2)) {
-		body += "<br>";
-		body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
-		body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
-		body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
-		body += "<b>CO2 level:</b> " + String(co2) + " ppm<br>";
-		body += "<br>";
-	}
-#elif (USE_ENV_SENSOR == 1)
-	float temperature = 0;
-	float humidity = 0;
-	float pressure = 0;
-	if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
-		body += "<br>";
-		body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
-		body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
-		body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
-		body += "<b>Pressure:</b> " + String(pressure) + " kPa<br>";
-		body += "<br>";
-	}
-#else
-	if (lastSensorData(pm2_5)) {
-		body += "<br>";
-		body += "<b>PM2.5 value: " + String(pm2_5) + " µg/m³</b><br>";
-		body += "<br>";
-	}
-#endif
-
-	body +=
-#if (USE_CO2_SENSOR == 1)
-	"Click <a href=\"/get\">here</a> to retrieve PM2.5, co2, temperature and humidity readings<br>"
-#elif (USE_ENV_SENSOR == 1)
-	"Click <a href=\"/get\">here</a> to retrieve PM2.5, temperature, humidity and pressure readings<br>"
-#else
-	"Click <a href=\"/get\">here</a> to retrieve PM2.5 readings<br>"
-#endif
-	"Click <a href=\"/rssi\">here</a> to get RSSI<br><br>"
-	"Click <a href=\"/led/100\">here</a> to set LED brightness to 100<br>"
-	"Click <a href=\"/led/10\">here</a> to set LED brightness to 10<br>"
-	"Click <a href=\"/led/0\">here</a> to set LED brightness to 0<br>"
-#if DEBUG_LEDS
-	"Click <a href=\"/ledColor/4278190080\">here</a> to set LED color to 0xFF000000<br>"
-	"Click <a href=\"/ledColor/16711680\">here</a> to set LED color to 0x00FF0000<br>"
-	"Click <a href=\"/ledColor/65280\">here</a> to set LED color to 0x0000FF00<br>"
-	"Click <a href=\"/ledColor/255\">here</a> to set LED color to 0x000000FF<br>"
-#endif
-	"Click <a href=\"/reconfigureWifi\">here</a> to reconfigure Wifi<br><br>"
-	"Click <a href=\"/resetWifi\">here</a> to erase all Wifi settings<br>"
-	"Click <a href=\"/reboot\">here</a> to reboot the device<br>"
-	"</body>"
-	"</html>";
-
-	request.response.sendRaw(200, "text/html", body.c_str());
-}
-
-#if 0
-void infoHandler(RequestContext& request)
-{
-	JsonObject tempObj = request.response.json.createNestedObject("temperature");
-	tempObj["type"] = "SCD41";
-
-	JsonObject humObj = request.response.json.createNestedObject("humidity");
-	humObj["type"] = "SCD41";
-
-	JsonObject co2Obj = request.response.json.createNestedObject("co2");
-	co2Obj["type"] = "SCD41";
-
-	// stop potentially previously started measurement
-	uint16_t error = g_ctx.m_scd4x.stopPeriodicMeasurement();
-	if (error) {
-		LOG_PRINTF("Error trying to execute stopPeriodicMeasurement(): ");
-		char errorMessage[256];
-		errorToString(error, errorMessage, 256);
-		LOG_PRINTF("%s\n", errorMessage);
+		m_shutdownServer = false;
 	}
 
-	uint16_t serial0;
-	uint16_t serial1;
-	uint16_t serial2;
+	//
+	// HTTP handlers
+	//
 
-	if (!g_ctx.m_scd4x.getSerialNumber(serial0, serial1, serial2)) {
-		char serial[32];
-		snprintf(serial, sizeof(serial) - 1, "0x%2x.%2x.%2x", serial0, serial1, serial2);
-		LOG_PRINTF("Serial: %s\n", serial);
-		co2Obj["serial"] = serial;
-	} else {
-		co2Obj["serial"] = "unknown";
+	void indexHandler(AsyncWebServerRequest *request)
+	{
+		String body =
+		"<!DOCTYPE html>\n"
+		"<html>\n"
+	#if USE_CO2_SENSOR
+		"<title>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</title>\n"
+	#elif (USE_ENV_SENSOR == 1)
+		"<title>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</title>\n"
+	#else
+		"<title>IKEA VINDRIKTNING server</title>\n"
+	#endif
+		"<meta charset=\"UTF-8\">\n"
+		"<meta http-equiv=\"refresh\" content=\"5\">\n"
+		"<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n"
+		"<style>\n"
+		"html { font-family: Helvetica; display: inline-block; margin: 10px auto}\n"
+		"body{margin-top: 0px;} h1 {color: #444444;margin: 50px auto 30px;}\n"
+		"p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n"
+		"</style>\n"
+		"</head>\n"
+		"<body>\n"
+	#if USE_CO2_SENSOR
+		"<h2>IKEA VINDRIKTNING + SCD41 co2/temperature/humidity server</h2>\n"
+	#elif (USE_ENV_SENSOR == 1)
+		"<h2>IKEA VINDRIKTNING + SHT3X temperature/humidity + QMP6988 pressure server</h2>\n"
+	#else
+		"<h2>IKEA VINDRIKTNING server</h2>\n"
+	#endif
+		"(c) 2022 Embedded Softworks, s.r.o."
+	#if USE_CO2_SENSOR
+		"<br><br>"
+		"LEDS (from bottom up): pm2.5, humidity, CO2"
+		"<br>";
+	#elif (USE_ENV_SENSOR == 1)
+		"<br><br>"
+		"LEDS (from bottom up): pm2.5, humidity"
+		"<br>";
+	#else
+		"<br>";
+	#endif
+
+		uint16_t pm2_5 = 0;
+	#if (USE_CO2_SENSOR == 1)
+		float temperature = 0;
+		float humidity = 0;
+		uint16_t co2 = 0;
+		if (lastSensorData(pm2_5, temperature, humidity, co2)) {
+			body += "<br>";
+			body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
+			body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
+			body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
+			body += "<b>CO2 level:</b> " + String(co2) + " ppm<br>";
+			body += "<br>";
+		}
+	#elif (USE_ENV_SENSOR == 1)
+		float temperature = 0;
+		float humidity = 0;
+		float pressure = 0;
+		if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
+			body += "<br>";
+			body += "<b>PM2.5 value:</b> " + String(pm2_5) + " µg/m³<br>";
+			body += "<b>Temperature:</b> " + String(temperature) + " ℃<br>";
+			body += "<b>Humidity:</b> " + String(humidity) + " %<br>";
+			body += "<b>Pressure:</b> " + String(pressure) + " kPa<br>";
+			body += "<br>";
+		}
+	#else
+		if (lastSensorData(pm2_5)) {
+			body += "<br>";
+			body += "<b>PM2.5 value: " + String(pm2_5) + " µg/m³</b><br>";
+			body += "<br>";
+		}
+	#endif
+
+		body +=
+	#if (USE_CO2_SENSOR == 1)
+		"Click <a href=\"/get\">here</a> to retrieve PM2.5, co2, temperature and humidity readings<br>"
+	#elif (USE_ENV_SENSOR == 1)
+		"Click <a href=\"/get\">here</a> to retrieve PM2.5, temperature, humidity and pressure readings<br>"
+	#else
+		"Click <a href=\"/get\">here</a> to retrieve PM2.5 readings<br>"
+	#endif
+		"Click <a href=\"/rssi\">here</a> to get RSSI<br><br>"
+
+		"Click <a href=\"/led?value=100\">here</a> to set LED brightness to 100<br>"
+		"Click <a href=\"/led?value=10\">here</a> to set LED brightness to 10<br>"
+		"Click <a href=\"/led?value=0\">here</a> to set LED brightness to 0<br>"
+	#if DEBUG_LEDS
+		"Click <a href=\"/ledColor?value=4278190080\">here</a> to set LED color to 0xFF000000<br>"
+		"Click <a href=\"/ledColor?value=16711680\">here</a> to set LED color to 0x00FF0000<br>"
+		"Click <a href=\"/ledColor?value=65280\">here</a> to set LED color to 0x0000FF00<br>"
+		"Click <a href=\"/ledColor?value=255\">here</a> to set LED color to 0x000000FF<br>"
+	#endif
+		"<br>"
+		"Click <a href=\"/reconfigureWifi\">here</a> to reconfigure Wifi<br><br>"
+		"Click <a href=\"/resetWifi\">here</a> to erase all Wifi settings<br>"
+		"Click <a href=\"/reboot\">here</a> to reboot the device<br>"
+		"</body>"
+		"</html>";
+
+		request->send(200, "text/html", body);
 	}
 
-	uint16_t altitude;
-	if (!g_ctx.m_scd4x.getSensorAltitude(altitude)) {
-		co2Obj["altitude"] = altitude;
-	} else {
-		co2Obj["altitude"] = "unknown";
+	void getHandler(AsyncWebServerRequest *request)
+	{
+		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
+
+		uint16_t pm2_5 = 0;
+	#if (USE_CO2_SENSOR == 1)
+		float temperature = 0;
+		float humidity = 0;
+		uint16_t co2 = 0;
+		if (lastSensorData(pm2_5, temperature, humidity, co2)) {
+			doc["co2"] = co2;
+			doc["temperature"] = temperature;
+			doc["humidity"] = humidity;
+			doc["pm2_5"] = pm2_5;
+		} else {
+			doc["co2"] = 0;
+			doc["temperature"] = 0;
+			doc["humidity"] = 0;
+			doc["pm2_5"] = 0;
+		}
+	#elif (USE_ENV_SENSOR == 1)
+		float temperature = 0;
+		float humidity = 0;
+		float pressure = 0;
+		if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
+			doc["pressure"] = pressure;
+			doc["temperature"] = temperature;
+			doc["humidity"] = humidity;
+			doc["pm2_5"] = pm2_5;
+		} else {
+			doc["pressure"] = 0;
+			doc["temperature"] = 0;
+			doc["humidity"] = 0;
+			doc["pm2_5"] = 0;
+		}
+	#else
+		if (lastSensorData(pm2_5)) {
+			doc["pm2_5"] = pm2_5;
+		} else {
+			doc["pm2_5"] = 0;
+		}
+	#endif
+
+		// add time parameter
+		uint64_t currTimeMs = compensatedMillis();
+		doc["currTimeMs"] = currTimeMs;
+		doc["currTime"] = msToTimeStr(currTimeMs);
+		doc["timeToReset"] = msToTimeStr(timeToReset());
+
+		char buffer[OUTPUT_JSON_BUFFER_SIZE];
+		serializeJson(doc, buffer, sizeof(buffer));
+		request->send(200, "application/json", buffer);
 	}
 
-	uint16_t ascEnabled = false;
-	if (!g_ctx.m_scd4x.getAutomaticSelfCalibration(ascEnabled)) {
-		co2Obj["autoCalibrationEnabled"] = ascEnabled ? "true" : "false";
-	} else {
-		co2Obj["autoCalibrationEnabled"] = "unknown";
+	void rssiHandler(AsyncWebServerRequest *request)
+	{
+		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
+
+		// print the received signal strength:
+		long rssi = WiFi.RSSI();
+		LOG_PRINTF("signal strength (RSSI): %d dBm\n", rssi);
+
+		doc["rssi"] = rssi;
+
+		// add time parameter
+		uint64_t currTimeMs = compensatedMillis();
+		doc["currTimeMs"] = currTimeMs;
+		doc["currTime"] = msToTimeStr(currTimeMs);
+		doc["timeToReset"] = msToTimeStr(timeToReset());
+
+		char buffer[OUTPUT_JSON_BUFFER_SIZE];
+		serializeJson(doc, buffer, sizeof(buffer));
+		request->send(200, "application/json", buffer);
 	}
 
-	// re-start measurements
-	error = g_ctx.m_scd4x.startPeriodicMeasurement();
-	if (error) {
-		LOG_PRINTF("Error trying to execute startPeriodicMeasurement(): ");
-		char errorMessage[256];
-		errorToString(error, errorMessage, 256);
-		LOG_PRINTF("%s\n", errorMessage);
+	void reconfigureWifiHandler(AsyncWebServerRequest *request)
+	{
+		String body =
+		"<!DOCTYPE html>"
+		"<html>"
+		"<meta http-equiv=\"refresh\" content=\"2; url=/index\">"
+		"<body>"
+		"WiFi reconfiguration initiated"
+		"</body>";
+		request->send(200, "text/html", body);
+		m_shutdownServer = true;
 	}
 
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-}
-#endif
+	void resetWifi(AsyncWebServerRequest *request)
+	{
+		String body =
+		"<!DOCTYPE html>"
+		"<html>"
+		"<meta http-equiv=\"refresh\" content=\"2; url=/index\">"
+		"<body>"
+		"Resetting WiFi..."
+		"</body>";
+		request->send(200, "text/html", body);
 
-void getHandler(RequestContext& request)
-{
-	uint16_t pm2_5 = 0;
-#if (USE_CO2_SENSOR == 1)
-	float temperature = 0;
-	float humidity = 0;
-	uint16_t co2 = 0;
-	if (lastSensorData(pm2_5, temperature, humidity, co2)) {
-		request.response.json["co2"] = co2;
-		request.response.json["temperature"] = temperature;
-		request.response.json["humidity"] = humidity;
-		request.response.json["pm2_5"] = pm2_5;
-	} else {
-		request.response.json["co2"] = 0;
-		request.response.json["temperature"] = 0;
-		request.response.json["humidity"] = 0;
-		request.response.json["pm2_5"] = 0;
+		// give it enough time to deliver response back to caller
+		delay(100);
+
+		// now reset
+		wifiReset();
 	}
-#elif (USE_ENV_SENSOR == 1)
-	float temperature = 0;
-	float humidity = 0;
-	float pressure = 0;
-	if (lastSensorData(pm2_5, temperature, humidity, pressure)) {
-		request.response.json["pressure"] = pressure;
-		request.response.json["temperature"] = temperature;
-		request.response.json["humidity"] = humidity;
-		request.response.json["pm2_5"] = pm2_5;
-	} else {
-		request.response.json["pressure"] = 0;
-		request.response.json["temperature"] = 0;
-		request.response.json["humidity"] = 0;
-		request.response.json["pm2_5"] = 0;
+
+	void rebootHandler(AsyncWebServerRequest *request)
+	{
+		String body =
+		"<!DOCTYPE html>"
+		"<html>"
+		"<meta http-equiv=\"refresh\" content=\"10; url=/index\">"
+		"<body>"
+		"Rebooting..."
+		"</body>";
+		request->send(200, "text/html", body);
+
+		// schedule reboot
+		watchdogScheduleReboot();
 	}
-#else
-	if (lastSensorData(pm2_5)) {
-		request.response.json["pm2_5"] = pm2_5;
-	} else {
-		request.response.json["pm2_5"] = 0;
-	}
-#endif
 
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-}
+	void ledHandler(AsyncWebServerRequest *request)
+	{
+		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
 
-void rssiHandler(RequestContext& request)
-{
-	// print the received signal strength:
-	long rssi = WiFi.RSSI();
-	LOG_PRINTF("signal strength (RSSI): %d dBm\n", rssi);
-
-	request.response.json["rssi"] = rssi;
-
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-}
-
-void reconfigureWifiHandler(RequestContext& request)
-{
-	bool success = wifiReconfigure();
-
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-	request.response.json["success"] = success;
-}
-
-void resetWifi(RequestContext& request)
-{
-	bool success = wifiReset();
-
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-	request.response.json["success"] = success;
-}
-
-void rebootHandler(RequestContext& request)
-{
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-
-	// schedule reboot
-	watchdogScheduleReboot();
-}
-
-void configureHandler(RequestContext& request)
-{
-	const char *opParam = request.pathVariables.get("operation");
-	const char *valParam = request.pathVariables.get("value");
-	if (!opParam || !valParam) {
-		LOG_PRINTF("Please use /<operation>/<value> path!\n");
-		request.response.json["error"] = "invalid";
-	} else {
-
-		// what configuration operation was requested?
-		String opParamStr(opParam);
-
-		if (opParamStr == "led") {
-			int value = atoi(valParam);
+		if (request->hasParam("value")) {
+			int value = atoi(request->getParam("value")->value().c_str());
 			LOG_PRINTF("LED value: %d\n", value);
 			Display::instance().setLedBrightness(value);
-			request.response.json["led"] = value;
+			request->redirect("/index");
+		} else {
+			request->send(404, "text/plain", "Not found");
 		}
-#if DEBUG_LEDS
-		else if (opParamStr == "ledColor") {
-			int value = atoi(valParam);
-			LOG_PRINTF("LED color value: %d\n", value);
-			Display::instance().setColor(value, PM_LED);
-			request.response.json["led"] = value;
-		}
-#endif
 	}
 
-	// add time parameter
-	uint64_t currTimeMs = compensatedMillis();
-	request.response.json["currTimeMs"] = currTimeMs;
-	request.response.json["currTime"] = msToTimeStr(currTimeMs);
-	request.response.json["timeToReset"] = msToTimeStr(timeToReset());
-}
+	#if DEBUG_LEDS
+	void ledColorHandler(AsyncWebServerRequest *request)
+	{
+		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
+
+		if (request->hasParam("value")) {
+			int value = atoi(request->getParam("value")->value().c_str());
+			LOG_PRINTF("LED color value: %d\n", value);
+			Display::instance().setColor(value, PM_LED);
+			request->redirect("/index");
+		} else {
+			request->send(404, "text/plain", "Not found");
+		}
+	}
+	#endif
+
+	void task()
+	{
+		AsyncWebServer server(80);
+
+		server.on("/", HTTP_GET, [=](AsyncWebServerRequest *request){
+			indexHandler(request);
+		});
+
+		server.on("/index", HTTP_GET, [=](AsyncWebServerRequest *request){
+			indexHandler(request);
+		});
+
+		server.on("/get", HTTP_GET, [=](AsyncWebServerRequest *request){
+			getHandler(request);
+		});
+
+		server.on("/rssi", HTTP_GET, [=](AsyncWebServerRequest *request){
+			rssiHandler(request);
+		});
+
+		server.on("/led", HTTP_GET, [=](AsyncWebServerRequest *request){
+			ledHandler(request);
+		});
+
+#if DEBUG_LEDS
+		server.on("/ledColor", HTTP_GET, [=](AsyncWebServerRequest *request){
+			ledColorHandler(request);
+		});
+#endif
+
+		server.on("/reconfigureWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
+			reconfigureWifiHandler(request);
+		});
+
+		server.on("/resetWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
+			resetWifi(request);
+		});
+
+		server.on("/reboot", HTTP_GET, [=](AsyncWebServerRequest *request){
+			rebootHandler(request);
+		});
+
+		server.onNotFound([=](AsyncWebServerRequest *request){
+			request->send(404, "text/plain", "Not found");
+		});
+
+		server.begin();
+
+		if (!MDNS.begin(wifiHostName().c_str())) {
+			LOG_PRINTF("Error starting MDNS responder!\n");
+		}
+
+		// Add service to MDNS-SD so our webserver can be located
+		MDNS.addService("http", "tcp", 80);
+
+		while (1) {
+			if (m_shutdownServer) {
+				m_shutdownServer = false;
+				server.end();
+				wifiReconfigure();
+				server.begin();
+			}
+			delay(100);
+		}
+	}
+
+};
+
+static ServerTaskCtx g_ctx;
 
 void serverTask(void *pvParameters __attribute__((unused)))
 {
-	g_ctx.m_server
-		.buildHandler("/")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, indexHandler);
-
-#if 0
-	g_ctx.m_server
-		.buildHandler("/info")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, infoHandler);
-#endif
-
-	g_ctx.m_server
-		.buildHandler("/get")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, getHandler);
-
-	g_ctx.m_server
-		.buildHandler("/rssi")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, rssiHandler);
-
-	g_ctx.m_server
-		.buildHandler("/:operation/:value")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, configureHandler);
-
-	g_ctx.m_server
-		.buildHandler("/reconfigureWifi")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, reconfigureWifiHandler);
-
-	g_ctx.m_server
-		.buildHandler("/resetWifi")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, resetWifi);
-
-	g_ctx.m_server
-		.buildHandler("/reboot")
-		.setDisableAuthOverride()
-		.on(HTTP_GET, rebootHandler);
-
-	g_ctx.m_server.clearBuilders();
-	g_ctx.m_server.begin();
-
-	while (1) {
-		delay(100);
-	}
+	g_ctx.task();
 }

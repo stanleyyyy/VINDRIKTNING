@@ -1,11 +1,6 @@
 #pragma once
 
 /**
- * Set this to false to disable Serial logging
- */
-#define DEBUG false
-
-/**
  * Set this to 1 if you have SensirionI2CScd4x CO2 sensor
  */
 #define USE_CO2_SENSOR	0
@@ -13,14 +8,19 @@
 /**
  * Set this to 1 if you have M5Stack ENV III sensor
  */
-#define USE_ENV_SENSOR	1
+#define USE_ENV_SENSOR	0
 
 /**
  * Timeout for the WiFi connection. When this is reached,
  * the ESP goes into deep sleep for 30seconds to try and
  * recover.
  */
-#define WIFI_TIMEOUT 10 // 10 seconds
+#define WIFI_TIMEOUT 10000 // 10 seconds
+
+/**
+ * The maximum number of connection retries
+ */
+#define WIFI_RETRIES 3
 
 /**
  * Syncing time with an NTP server
@@ -45,16 +45,17 @@
 #define SSID_MAX_LEN 32
 #define PASS_MAX_LEN 64
 #define WIFICHECK_INTERVAL 1000L
-#define NUM_WIFI_CREDENTIALS 1
 #define CONFIG_FILENAME F("/wifi_cred.dat")
+#define LAST_PARAMS_FILENAME F("/wifi_last_params.dat")
 #define USING_CORS_FEATURE false
 #define USE_DHCP_IP true
 #define USE_CONFIGURABLE_DNS true
 #define USE_CUSTOM_AP_IP false
 #define ESP_DRD_USE_SPIFFS true
-#define DEFAULT_HOST_NAME "ESP32-VINDRIKTNING"
 #define HOST_NAME_LEN 40
 #define HTTP_PORT 80
+#define RESET_WHEN_RECONFIGURING_WIFI 0		// set to 1 to reconfigure wifi via esp32 reset
+#define PRINT_PASSWORDS 0					// set to 1 to show plaintext passwords in console
 
 #if ESP32
 	// For ESP32, this better be 0 to shorten the connect time.

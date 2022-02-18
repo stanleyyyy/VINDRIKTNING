@@ -1,7 +1,6 @@
 #include <Arduino.h>
 
-#include "WebServer.h"
-#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWebserver.h>
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 
@@ -21,11 +20,13 @@
 
 class ServerTaskCtx {
 private:
-	bool m_shutdownServer;
+	bool m_wifiReconfigureRequested;
+	bool m_wifiResetRequested;
 public:
 	ServerTaskCtx()
 	{
-		m_shutdownServer = false;
+		m_wifiReconfigureRequested = false;
+		m_wifiResetRequested = false;
 	}
 
 	//
@@ -34,6 +35,8 @@ public:
 
 	void indexHandler(AsyncWebServerRequest *request)
 	{
+		LOG_PRINTF("%s(%d): request from %s\n", __FUNCTION__, __LINE__, request->client()->remoteIP().toString().c_str());
+
 		String body =
 		"<!DOCTYPE html>\n"
 		"<html>\n"
@@ -138,6 +141,7 @@ public:
 
 	void getHandler(AsyncWebServerRequest *request)
 	{
+		LOG_PRINTF("%s(%d): request from %s\n", __FUNCTION__, __LINE__, request->client()->remoteIP().toString().c_str());
 		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
 
 		uint16_t pm2_5 = 0;
@@ -183,11 +187,13 @@ public:
 		uint64_t currTimeMs = compensatedMillis();
 		doc["currTimeMs"] = currTimeMs;
 		doc["currTime"] = msToTimeStr(currTimeMs);
-		doc["timeToReset"] = msToTimeStr(timeToReset());
+		doc["watchdogTimeToReset"] = msToTimeStr(watchdogTimeToReset());
 
 		char buffer[OUTPUT_JSON_BUFFER_SIZE];
 		serializeJson(doc, buffer, sizeof(buffer));
-		request->send(200, "application/json", buffer);
+
+		AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buffer);
+		request->send(response);
 	}
 
 	void rssiHandler(AsyncWebServerRequest *request)
@@ -204,7 +210,7 @@ public:
 		uint64_t currTimeMs = compensatedMillis();
 		doc["currTimeMs"] = currTimeMs;
 		doc["currTime"] = msToTimeStr(currTimeMs);
-		doc["timeToReset"] = msToTimeStr(timeToReset());
+		doc["watchdogTimeToReset"] = msToTimeStr(watchdogTimeToReset());
 
 		char buffer[OUTPUT_JSON_BUFFER_SIZE];
 		serializeJson(doc, buffer, sizeof(buffer));
@@ -221,7 +227,7 @@ public:
 		"WiFi reconfiguration initiated"
 		"</body>";
 		request->send(200, "text/html", body);
-		m_shutdownServer = true;
+		m_wifiReconfigureRequested = true;
 	}
 
 	void resetWifi(AsyncWebServerRequest *request)
@@ -239,7 +245,7 @@ public:
 		delay(100);
 
 		// now reset
-		wifiReset();
+		m_wifiResetRequested = true;
 	}
 
 	void rebootHandler(AsyncWebServerRequest *request)
@@ -289,66 +295,106 @@ public:
 
 	void task()
 	{
-		AsyncWebServer server(80);
-
-		server.on("/", HTTP_GET, [=](AsyncWebServerRequest *request){
-			indexHandler(request);
-		});
-
-		server.on("/index", HTTP_GET, [=](AsyncWebServerRequest *request){
-			indexHandler(request);
-		});
-
-		server.on("/get", HTTP_GET, [=](AsyncWebServerRequest *request){
-			getHandler(request);
-		});
-
-		server.on("/rssi", HTTP_GET, [=](AsyncWebServerRequest *request){
-			rssiHandler(request);
-		});
-
-		server.on("/led", HTTP_GET, [=](AsyncWebServerRequest *request){
-			ledHandler(request);
-		});
-
-#if DEBUG_LEDS
-		server.on("/ledColor", HTTP_GET, [=](AsyncWebServerRequest *request){
-			ledColorHandler(request);
-		});
-#endif
-
-		server.on("/reconfigureWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
-			reconfigureWifiHandler(request);
-		});
-
-		server.on("/resetWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
-			resetWifi(request);
-		});
-
-		server.on("/reboot", HTTP_GET, [=](AsyncWebServerRequest *request){
-			rebootHandler(request);
-		});
-
-		server.onNotFound([=](AsyncWebServerRequest *request){
-			request->send(404, "text/plain", "Not found");
-		});
-
-		server.begin();
-
-		if (!MDNS.begin(wifiHostName().c_str())) {
-			LOG_PRINTF("Error starting MDNS responder!\n");
-		}
-
-		// Add service to MDNS-SD so our webserver can be located
-		MDNS.addService("http", "tcp", 80);
+		AsyncWebServer *server = wifiGetHttpServer();
+		bool shallInitServer = true;
 
 		while (1) {
-			if (m_shutdownServer) {
-				m_shutdownServer = false;
-				server.end();
-				wifiReconfigure();
-				server.begin();
+
+			//
+			// init server handlers if necessary
+			//
+
+			if (shallInitServer) {
+				shallInitServer = false;
+
+				server->on("/", HTTP_GET, [=](AsyncWebServerRequest *request){
+					indexHandler(request);
+				});
+
+				server->on("/index", HTTP_GET, [=](AsyncWebServerRequest *request){
+					indexHandler(request);
+				});
+
+				server->on("/get", HTTP_GET, [=](AsyncWebServerRequest *request){
+					getHandler(request);
+				});
+
+				server->on("/rssi", HTTP_GET, [=](AsyncWebServerRequest *request){
+					rssiHandler(request);
+				});
+
+				server->on("/led", HTTP_GET, [=](AsyncWebServerRequest *request){
+					ledHandler(request);
+				});
+
+#if DEBUG_LEDS
+				server->on("/ledColor", HTTP_GET, [=](AsyncWebServerRequest *request){
+					ledColorHandler(request);
+				});
+#endif
+
+				server->on("/reconfigureWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
+					reconfigureWifiHandler(request);
+				});
+
+				server->on("/resetWifi", HTTP_GET, [=](AsyncWebServerRequest *request){
+					resetWifi(request);
+				});
+
+				server->on("/reboot", HTTP_GET, [=](AsyncWebServerRequest *request){
+					rebootHandler(request);
+				});
+
+				server->onNotFound([=](AsyncWebServerRequest *request){
+					request->send(404, "text/plain", "Not found");
+				});
+
+				server->begin();
+
+				if (!MDNS.begin(wifiHostName().c_str())) {
+					LOG_PRINTF("Error starting MDNS responder!\n");
+				}
+
+				// Add service to MDNS-SD so our webserver can be located
+				MDNS.addService("http", "tcp", 80);
 			}
+
+			//
+			// handle wifi reconfigure request
+			//
+
+			if (m_wifiReconfigureRequested) {
+				m_wifiReconfigureRequested = false;
+				LOG_PRINTF("WiFi reconfiguration requested\n");
+
+				// reset server handlers
+				server->reset();
+
+				// init wifi reconfiguration
+				wifiReconfigure();
+
+				// and now we have to re-init the server again
+				shallInitServer = true;
+			}
+
+			//
+			// handle wifi reset request
+			//
+
+			if (m_wifiResetRequested) {
+				m_wifiResetRequested = false;
+				LOG_PRINTF("WiFi reset requested\n");
+
+				// reset server handlers
+				server->reset();
+
+				// init wifi reset
+				wifiReset();
+
+				// and now we have to re-init the server again
+				shallInitServer = true;
+			}
+
 			delay(100);
 		}
 	}

@@ -6,188 +6,202 @@
 
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include <WiFiMulti.h>
 #include <ESPmDNS.h>
 #include <SPIFFS.h>
 #include "wifiTask.h"
 #include "display.h"
 #include "hsvToRgb.h"
+#include "driver/adc.h"
+#include "WiFiMultiSSID.h"
 
 #include <ESPAsync_WiFiManager.h>
 #include <ESP_DoubleResetDetector.h>
-typedef struct {
-	char wifi_ssid[SSID_MAX_LEN];
-	char wifi_pw[PASS_MAX_LEN];
-} WiFi_Credentials;
+
+#if PRINT_PASSWORDS
+#define PASSWORD_STR(str) (str && str[0]) ? str : "<empty>"
+#else
+#define PASSWORD_STR(str) (str && str[0]) ? "********" : "<empty>"
+#endif
+
+#define MAX(a, b) ((a) > (b)) ? (a) : (b)
 
 typedef struct {
-	WiFi_Credentials m_wifiCredentials[NUM_WIFI_CREDENTIALS];
+	// stored wifi credentials
+	WiFiMultiSSID::Credentials m_credentials[NUM_WIFI_CREDENTIALS];
+	// configured host name
 	char m_hostName[HOST_NAME_LEN];
+	// force access point mode flag
 	bool m_forceAp;
+	// structure checksum
 	uint16_t m_checksum;
-} WM_config;
+} WiFiManagerConfig;
 
-class WifiContext {
+class WiFiContext {
 public:
 	// persistent wifi configuration data
-	WM_config m_WM_config;
-	WiFi_AP_IPConfig m_WM_AP_IPconfig;
-	WiFi_STA_IPConfig m_WM_STA_IPconfig;
-	WiFiMulti m_wifiMulti;
+	WiFiManagerConfig m_managerConfig;
 
+	AsyncWebServer m_httpServer;
+
+	// client mode IP configuration
+	WiFi_STA_IPConfig m_clientConfig;
+
+	// last connection params
+	WiFiMultiSSID::LastParams m_lastWiFiParams;
+
+	// multi SSID wifi connection helper
+	WiFiMultiSSID m_wifiMulti;
+
+	// double reset detector
 	DoubleResetDetector *m_drd;
 
 	// SSID and PW for Config Portal
 	String m_ssid;
 	String m_password;
 
-	// SSID and PW for your Router
-	String m_routerSSID;
-	String m_routerPassword;
-
-#if (!USING_ESP32_S2 && !USING_ESP32_C3)
+	#if (!USING_ESP32_S2 && !USING_ESP32_C3)
 	DNSServer m_dnsServer;
-#endif
+	#endif
 
-	// Indicates whether ESP has WiFi credentials saved from previous session, or double reset detected
-	bool m_initialConfig;
+	#if USE_CUSTOM_AP_IP
+	// ap ip config
+	IPAddress m_apIpAddress;
+	IPAddress m_apGateway;
+	IPAddress m_apMask;
+	#endif
 
-	// Use DHCP
-	IPAddress stationIP = IPAddress(0, 0, 0, 0);
-	IPAddress gatewayIP = IPAddress(192, 168, 2, 1);
-	IPAddress netMask = IPAddress(255, 255, 255, 0);
-
-	IPAddress dns1IP = gatewayIP;
-	IPAddress dns2IP = IPAddress(8, 8, 8, 8);
-
-	IPAddress APStaticIP = IPAddress(192, 168, 100, 1);
-	IPAddress APStaticGW = IPAddress(192, 168, 100, 1);
-	IPAddress APStaticSN = IPAddress(255, 255, 255, 0);
+	wifi_event_id_t m_wifiEventId;
 
 	volatile bool m_shallReconfigure;
 	volatile bool m_shallReset;
 	volatile bool m_connected;
 
-	WifiContext()
+	static WiFiContext &instance()
+	{
+		static WiFiContext *ctx = nullptr;
+		if (!ctx) {
+			ctx = new WiFiContext();
+		}
+		return *ctx;
+	}
+
+	WiFiContext()
+		: m_httpServer(HTTP_PORT)
 	{
 		m_ssid = "ESP_" + String((uint32_t)ESP.getEfuseMac(), HEX);
 		m_drd = NULL;
-		m_initialConfig = false;
 		m_shallReconfigure = false;
 		m_shallReset = false;
 		m_connected = false;
+		m_wifiEventId = 0;
+
+		// default client mode config
+		m_clientConfig._sta_static_ip = IPAddress(0, 0, 0, 0);
+		m_clientConfig._sta_static_gw = IPAddress(192, 168, 2, 1);
+		m_clientConfig._sta_static_sn = IPAddress(255, 255, 255, 0);
+		m_clientConfig._sta_static_dns1 = m_clientConfig._sta_static_gw;
+		m_clientConfig._sta_static_dns2 = IPAddress(8, 8, 8, 8);
+
+		#if USE_CUSTOM_AP_IP
+		// default ap mode config
+		m_apIpAddress = IPAddress(192, 168, 100, 1);
+		m_apGateway = IPAddress(192, 168, 100, 1);
+		m_apMask = IPAddress(255, 255, 255, 0);
+		#endif
 	}
 
-	void initAPIPConfigStruct(WiFi_AP_IPConfig &in_m_WM_AP_IPconfig)
+	void displayClientConfig()
 	{
-		in_m_WM_AP_IPconfig._ap_static_ip = APStaticIP;
-		in_m_WM_AP_IPconfig._ap_static_gw = APStaticGW;
-		in_m_WM_AP_IPconfig._ap_static_sn = APStaticSN;
+		LOG_PRINTF("Client IP configuration:\n");
+		LOG_PRINTF("IP           = %s\n", m_clientConfig._sta_static_ip.toString().c_str());
+		LOG_PRINTF("Gateway      = %s\n", m_clientConfig._sta_static_gw.toString().c_str());
+		LOG_PRINTF("Network mask = %s\n", m_clientConfig._sta_static_sn.toString().c_str());
+		LOG_PRINTF("DNS1         = %s\n", m_clientConfig._sta_static_dns1.toString().c_str());
+		LOG_PRINTF("DNS2         = %s\n", m_clientConfig._sta_static_dns2.toString().c_str());
 	}
 
-	void initSTAIPConfigStruct(WiFi_STA_IPConfig &staticIpConfig)
+	void displayCredentials()
 	{
-		staticIpConfig._sta_static_ip = stationIP;
-		staticIpConfig._sta_static_gw = gatewayIP;
-		staticIpConfig._sta_static_sn = netMask;
-		staticIpConfig._sta_static_dns1 = dns1IP;
-		staticIpConfig._sta_static_dns2 = dns2IP;
+		for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
+			LOG_PRINTF("Credentials #%d:\n", i);
+			LOG_PRINTF("SSID: %s\n", m_managerConfig.m_credentials[i].m_ssid[0] ? m_managerConfig.m_credentials[i].m_ssid : "<empty>");
+			LOG_PRINTF("PASS: %s\n", PASSWORD_STR(m_managerConfig.m_credentials[i].m_password));
+		}
 	}
 
-	void displayIPConfigStruct(WiFi_STA_IPConfig staticIpConfig)
+	void displayLastWifiParams(WiFiMultiSSID::LastParams &params)
 	{
-		LOG_PRINTF("stationIP = %s, gatewayIP = %s\n", staticIpConfig._sta_static_ip.toString().c_str(), staticIpConfig._sta_static_gw.toString().c_str());
-		LOG_PRINTF("netMask = %s\n", staticIpConfig._sta_static_sn.toString().c_str());
-		LOG_PRINTF("dns1IP = %s, dns2IP = %s\n", staticIpConfig._sta_static_dns1.toString().c_str(), staticIpConfig._sta_static_dns2.toString().c_str());
-	}
-
-	void configWiFi(const WiFi_STA_IPConfig &staticIpConfig)
-	{
-		// Set static IP, Gateway, Subnetmask, DNS1 and DNS2. New in v1.0.5
-		WiFi.config(staticIpConfig._sta_static_ip, staticIpConfig._sta_static_gw, staticIpConfig._sta_static_sn, staticIpConfig._sta_static_dns1, staticIpConfig._sta_static_dns2);
+		LOG_PRINTF("Last WiFi parameters:\n");
+		LOG_PRINTF("SSID : %s\n", params.m_credentials.m_ssid[0] ? params.m_credentials.m_ssid : "<empty>");
+		LOG_PRINTF("PASS : %s\n", PASSWORD_STR(params.m_credentials.m_password));
+		LOG_PRINTF("BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n", params.m_bssid[0], params.m_bssid[1], params.m_bssid[2], params.m_bssid[3], params.m_bssid[4], params.m_bssid[5]);
+		LOG_PRINTF("CHAN : %d\n", params.m_channel);
 	}
 
 	uint8_t connectMultiWiFi()
 	{
 		uint8_t status;
-		LOGERROR(F("ConnectMultiWiFi with :"));
+		LOG_PRINTF("Connecting to WiFi\n");
 
-		if ((m_routerSSID != "") && (m_routerPassword != "")) {
-			LOGERROR3(F("* Flash-stored m_routerSSID = "), m_routerSSID, F(", m_routerPassword = "), m_routerPassword);
-			LOGERROR3(F("* Add SSID = "), m_routerSSID, F(", PW = "), m_routerPassword);
-			m_wifiMulti.addAP(m_routerSSID.c_str(), m_routerPassword.c_str());
-		}
+		//
+		// Set static IP, Gateway, Subnetmask, DNS1 and DNS2
+		//
 
-		for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
-			// Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
-			if ((String(m_WM_config.m_wifiCredentials[i].wifi_ssid) != "") && (strlen(m_WM_config.m_wifiCredentials[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE)) {
-				LOGERROR3(F("* Additional SSID = "), m_WM_config.m_wifiCredentials[i].wifi_ssid, F(", PW = "), m_WM_config.m_wifiCredentials[i].wifi_pw);
+		WiFi.config(
+			m_clientConfig._sta_static_ip,
+			m_clientConfig._sta_static_gw,
+			m_clientConfig._sta_static_sn,
+			m_clientConfig._sta_static_dns1,
+			m_clientConfig._sta_static_dns2);
+
+		// first try to connect quickly using previous parameters
+		status = m_wifiMulti.fastReconnect(
+			m_lastWiFiParams,
+			[=] {
+				// periodically reset watchdog
+				watchdogReset();
+			},
+			WIFI_RETRIES,
+			WIFI_TIMEOUT);
+
+		// if the fast reconnect failed, do a full featured connect with scan:
+		if (status != WL_CONNECTED) {
+			// attempt connection to all specified WiFi networks, with maximum of WIFI_RETRIES retries
+			status = m_wifiMulti.connect(
+				[=] {
+					// periodically reset watchdog
+					watchdogReset();
+				},
+				WIFI_RETRIES,
+				WIFI_TIMEOUT);
+
+			if (status == WL_CONNECTED) {
+				LOG_PRINTF("WiFi connected\n");
+				LOG_PRINTF("SSID: %s, RSSI = %d\n", WiFi.SSID().c_str(), WiFi.RSSI());
+				LOG_PRINTF("Channel: %d, IP address: %s\n", WiFi.channel(), WiFi.localIP().toString().c_str());
+			} else {
+				LOG_PRINTF("WiFi connection failed, rebooting...\n");
+				delay(5000);
+				// To avoid unnecessary DRD
+				m_drd->stop();
+				// now restart
+				ESP.restart();
 			}
 		}
-
-		LOG_PRINTF("Connecting MultiWifi...\n");
-
-		// set static ip if available
-		configWiFi(m_WM_STA_IPconfig);
-
-		watchdogEnable(false);
-		status = m_wifiMulti.run();
-		watchdogEnable(true);
-		delay(WIFI_MULTI_1ST_CONNECT_WAITING_MS);
-
-		int i = 0;
-		while ((i++ < 20) && (status != WL_CONNECTED)) {
-			status = WiFi.status();
-			watchdogReset();
-
-			if (status == WL_CONNECTED)
-				break;
-			else
-				delay(WIFI_MULTI_CONNECT_WAITING_MS);
-		}
-
-		if (status == WL_CONNECTED) {
-			LOG_PRINTF("WiFi connected after time: %d\n", i);
-			LOG_PRINTF("SSID: %s, RSSI = %d\n", WiFi.SSID().c_str(), WiFi.RSSI());
-			LOG_PRINTF("Channel: %d, IP address: %s\n", WiFi.channel(), WiFi.localIP().toString().c_str());
-			m_connected = true;
-		} else {
-			LOG_PRINTF("WiFi not connected, rebooting...\n");
-			// To avoid unnecessary DRD
-			m_drd->loop();
-			ESP.restart();
-		}
-
 		return status;
-	}
-
-	// format bytes
-	String formatBytes(size_t bytes)
-	{
-		if (bytes < 1024)
-		{
-			return String(bytes) + "B";
-		}
-		else if (bytes < (1024 * 1024))
-		{
-			return String(bytes / 1024.0) + "KB";
-		}
-		else if (bytes < (1024 * 1024 * 1024))
-		{
-			return String(bytes / 1024.0 / 1024.0) + "MB";
-		}
-		else
-		{
-			return String(bytes / 1024.0 / 1024.0 / 1024.0) + "GB";
-		}
 	}
 
 	void wifiReconnectIfNeeded()
 	{
 		if ((WiFi.status() != WL_CONNECTED)) {
+			// clear connection status
 			m_connected = false;
+
 			LOG_PRINTF("\nWiFi lost. Call connectMultiWiFi in loop\n");
 			connectMultiWiFi();
+
+			// notify waiting tasks that we are successfully connected
+			m_connected = true;
 		}
 	}
 
@@ -219,30 +233,45 @@ public:
 		File file = SPIFFS.open(CONFIG_FILENAME, "r");
 		LOG_PRINTF("Loading config...\n");
 
-		memset((void *)&m_WM_config, 0, sizeof(m_WM_config));
-
-		// New in v1.4.0
-		memset((void *)&m_WM_STA_IPconfig, 0, sizeof(m_WM_STA_IPconfig));
+		memset((void *)&m_managerConfig, 0, sizeof(m_managerConfig));
+		memset((void *)&m_clientConfig, 0, sizeof(m_clientConfig));
 
 		if (file) {
-			file.readBytes((char *)&m_WM_config, sizeof(m_WM_config));
-
-			// New in v1.4.0
-			file.readBytes((char *)&m_WM_STA_IPconfig, sizeof(m_WM_STA_IPconfig));
-
+			file.readBytes((char *)&m_managerConfig, sizeof(m_managerConfig));
+			file.readBytes((char *)&m_clientConfig, sizeof(m_clientConfig));
 			file.close();
-			LOG_PRINTF("OK\n");
 
-			if (m_WM_config.m_checksum != calcChecksum((uint8_t *)&m_WM_config, sizeof(m_WM_config) - sizeof(m_WM_config.m_checksum))) {
+			if (m_managerConfig.m_checksum != calcChecksum((uint8_t *)&m_managerConfig, sizeof(m_managerConfig) - sizeof(m_managerConfig.m_checksum))) {
 				LOG_PRINTF("Config checksum failed!\n");
 				return false;
+			} else {
+				LOG_PRINTF("Config loaded correctly\n");
 			}
 
-			// New in v1.4.0
-			displayIPConfigStruct(m_WM_STA_IPconfig);
+			displayClientConfig();
+			displayCredentials();
 			return true;
 		} else {
-			LOG_PRINTF("Failed\n");
+			LOG_PRINTF("Loading of config failed!\n");
+			return false;
+		}
+	}
+
+	bool wifiLoadLastParams()
+	{
+		File file = SPIFFS.open(LAST_PARAMS_FILENAME, "r");
+		LOG_PRINTF("Loading last params...\n");
+
+		memset((void *)&m_lastWiFiParams, 0, sizeof(m_lastWiFiParams));
+
+		if (file) {
+			file.readBytes((char *)&m_lastWiFiParams, sizeof(m_lastWiFiParams));
+			file.close();
+			LOG_PRINTF("Last params loading succeeded\n");
+			displayLastWifiParams(m_lastWiFiParams);
+			return true;
+		} else {
+			LOG_PRINTF("Last params loading failed!\n");
 			return false;
 		}
 	}
@@ -250,9 +279,13 @@ public:
 	void wifiEraseConfiguration()
 	{
 		LOG_PRINTF("Erasing config...\n");
-		memset((void *)&m_WM_config, 0, sizeof(m_WM_config));
-		memset((void *)&m_WM_STA_IPconfig, 0, sizeof(m_WM_STA_IPconfig));
+		memset((void *)&m_managerConfig, 0, sizeof(m_managerConfig));
+		memset((void *)&m_clientConfig, 0, sizeof(m_clientConfig));
 		wifiSaveConfiguration();
+
+		LOG_PRINTF("Erasing last params...\n");
+		memset((void *)&m_lastWiFiParams, 0, sizeof(m_lastWiFiParams));
+		wifiSaveLastParams();
 	}
 
 	void wifiSaveConfiguration()
@@ -261,22 +294,74 @@ public:
 		LOG_PRINTF("Saving config...\n");
 
 		if (file) {
-			m_WM_config.m_checksum = calcChecksum((uint8_t *)&m_WM_config, sizeof(m_WM_config) - sizeof(m_WM_config.m_checksum));
-			file.write((uint8_t *)&m_WM_config, sizeof(m_WM_config));
+			m_managerConfig.m_checksum = calcChecksum((uint8_t *)&m_managerConfig, sizeof(m_managerConfig) - sizeof(m_managerConfig.m_checksum));
+			file.write((uint8_t *)&m_managerConfig, sizeof(m_managerConfig));
 
-			displayIPConfigStruct(m_WM_STA_IPconfig);
+			displayClientConfig();
+			displayCredentials();
 
-			file.write((uint8_t *)&m_WM_STA_IPconfig, sizeof(m_WM_STA_IPconfig));
+			file.write((uint8_t *)&m_clientConfig, sizeof(m_clientConfig));
 			file.close();
-			LOG_PRINTF("Suceeded\n");
+			LOG_PRINTF("Config saved successfully\n");
 		} else {
-			LOG_PRINTF("Failed\n");
+			LOG_PRINTF("Failed to save config!\n");
 		}
+	}
+
+	void wifiSaveLastParams()
+	{
+		File file = SPIFFS.open(LAST_PARAMS_FILENAME, "w");
+		LOG_PRINTF("Saving last params...\n");
+
+		if (file) {
+			file.write((uint8_t *)&m_lastWiFiParams, sizeof(m_lastWiFiParams));
+			file.close();
+			LOG_PRINTF("Last params saved successfully\n");
+		} else {
+			LOG_PRINTF("Failed to save last params!\n");
+		}
+	}
+
+	void onStationConnected(WiFiEvent_t event, WiFiEventInfo_t info)
+	{
+		WiFiMultiSSID::LastParams lastParams;
+
+		// copy ssid
+		memset(lastParams.m_credentials.m_ssid, 0, sizeof(lastParams.m_credentials.m_ssid));
+		memcpy(lastParams.m_credentials.m_ssid, info.connected.ssid, MAX(info.connected.ssid_len, sizeof(lastParams.m_credentials.m_ssid) - 1));
+
+		// look for password - find a match for given SSID in our AP configuration
+		for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
+			if (String(m_managerConfig.m_credentials[i].m_ssid) == String(lastParams.m_credentials.m_ssid)) {
+				strcpy(lastParams.m_credentials.m_password, m_managerConfig.m_credentials[i].m_password);
+				break;
+			}
+		}
+
+		// copy bssid
+		memcpy(lastParams.m_bssid, info.connected.bssid, sizeof(info.connected.bssid));
+
+		// keep current channel number
+		lastParams.m_channel = info.connected.channel;
+
+		LOG_PRINTF("Station connected!\n");
+
+		// check if the configuration is different than the one currently cached
+		if (memcmp(&lastParams, &m_lastWiFiParams, sizeof(lastParams)) != 0) {
+			LOG_PRINTF("Last WiFi params have changed!\n");
+			// copy the new configuration and save it
+			memcpy(&m_lastWiFiParams, &lastParams, sizeof(lastParams));
+			wifiSaveLastParams();	
+		} else {
+			LOG_PRINTF("Got the same WiFi params again\n");
+		}
+
+		displayLastWifiParams(lastParams);
 	}
 
 	void wifiSetup()
 	{
-		LOG_PRINTF("\nStarting Wifi Manager using SPIFFS on %s %s %s\n", ARDUINO_BOARD, ESP_ASYNC_WIFIMANAGER_VERSION, ESP_DOUBLE_RESET_DETECTOR_VERSION);
+		LOG_PRINTF("Starting Wifi Manager using SPIFFS on %s %s %s\n", ARDUINO_BOARD, ESP_ASYNC_WIFIMANAGER_VERSION, ESP_DOUBLE_RESET_DETECTOR_VERSION);
 
 		if (!SPIFFS.begin(true)) {
 			LOG_PRINTF("SPIFFS/LittleFS failed! Already tried formatting.\n");
@@ -298,7 +383,7 @@ public:
 		while (file) {
 			String fileName = file.name();
 			size_t fileSize = file.size();
-			LOG_PRINTF("FS File: %s, size: %s\n", fileName.c_str(), formatBytes(fileSize).c_str());
+			LOG_PRINTF("FS File: %s, size: %f kB\n", fileName.c_str(), fileSize / 1024.0);
 			file = root.openNextFile();
 		}
 
@@ -309,197 +394,221 @@ public:
 		if (!m_drd)
 			LOG_PRINTF("Can't instantiate. Disable DRD feature\n");
 
-		initAPIPConfigStruct(m_WM_AP_IPconfig);
-		initSTAIPConfigStruct(m_WM_STA_IPconfig);
-
 		// start manager now
 		wifiStartManager();
 	}
 
-	void wifiStartManager(bool force = false)
+	void wifiStartManager()
 	{
-		AsyncWebServer m_server(HTTP_PORT);
 		m_connected = false;
 
+		bool shallRunAccessPoint = false;
+
+		//
+		// load saved configuration
+		//
+
 		bool configDataLoaded = false;
-		if (wifiLoadConfiguration()) {
+		if (wifiLoadConfiguration() && wifiLoadLastParams()) {
 			configDataLoaded = true;
-			LOG_PRINTF("Got stored Credentials. Timeout 120s for Config Portal\n");
+			LOG_PRINTF("Got stored WiFiMultiSSID::Credentials. Timeout 120s for Config Portal\n");
 		} else {
 			// Enter CP only if no stored SSID on flash and file
-			LOG_PRINTF("Open Config Portal without Timeout: No stored Credentials.\n");
-			m_initialConfig = true;
+			LOG_PRINTF("Open Config Portal without Timeout: No stored WiFiMultiSSID::Credentials.\n");
+			shallRunAccessPoint = true;
 		}
 
-		// set default host name
-		if (!m_WM_config.m_hostName[0]) {
-			strcpy(m_WM_config.m_hostName, DEFAULT_HOST_NAME);
+		//
+		// set default host name if explicit hostname was provided
+		//
+
+		if (!m_managerConfig.m_hostName[0]) {
+			strcpy(m_managerConfig.m_hostName, m_ssid.c_str());
 		}
 
-		LOG_PRINTF("Using host name %s\n", m_WM_config.m_hostName);
+		LOG_PRINTF("Using host name %s\n", m_managerConfig.m_hostName);
 
-		// Local intialization. Once its business is done, there is no need to keep it around
-		//  Use this to default DHCP hostname to ESP8266-XXXXXX or ESP32-XXXXXX
-		// ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &m_dnsServer);
-		//  Use this to personalize DHCP hostname (RFC952 conformed)0
+		//
+		// create instance of WiFi manager
+		//
+
 		#if (USING_ESP32_S2 || USING_ESP32_C3)
-		ESPAsync_WiFiManager ESPAsync_wifiManager(&server, NULL, m_WM_config.m_hostName);
+		ESPAsync_WiFiManager manager(&m_httpServer, NULL, m_managerConfig.m_hostName);
 		#else
 		DNSServer m_dnsServer;
-		ESPAsync_WiFiManager ESPAsync_wifiManager(&m_server, &m_dnsServer, m_WM_config.m_hostName);
+		ESPAsync_WiFiManager manager(&m_httpServer, &m_dnsServer, m_managerConfig.m_hostName);
 		#endif
-
-		if (configDataLoaded) {
-			ESPAsync_wifiManager.setConfigPortalTimeout(120); // If no access point name has been previously entered disable timeout.
-		}
 
 		#if USE_CUSTOM_AP_IP
 		// set custom ip for portal
-		//  New in v1.4.0
-		ESPAsync_wifiManager.setAPStaticIPConfig(m_WM_AP_IPconfig);
-		//////
+		manager.setAPStaticIPConfig(m_apIpAddress, m_apGateway, m_apMask);
 		#endif
 
-		ESPAsync_wifiManager.setMinimumSignalQuality(-1);			// no minimum signal quality
-		ESPAsync_wifiManager.setConfigPortalChannel(0);				// Set config portal channel, default = 1. Use 0 => random channel from 1-13
+		manager.setMinimumSignalQuality(-1);			// no minimum signal quality
+		manager.setConfigPortalChannel(0);				// Set config portal channel, default = 1. Use 0 => random channel from 1-13
 
 		#if USING_CORS_FEATURE
-		ESPAsync_wifiManager.setCORSHeader("Your Access-Control-Allow-Origin");
+		manager.setCORSHeader("Your Access-Control-Allow-Origin");
 		#endif
-
-		// We can't use WiFi.SSID() in ESP32as it's only valid after connected.
-		// SSID and Password stored in ESP32 wifi_ap_record_t and wifi_config_t are also cleared in reboot
-		// Have to create a new function to store in EEPROM/SPIFFS for this purpose
-		m_routerSSID = ESPAsync_wifiManager.WiFi_SSID();
-		m_routerPassword = ESPAsync_wifiManager.WiFi_Pass();
-
-		// Remove this line if you do not want to see WiFi password printed
-		// LOG_PRINTF("ESP Self-Stored: SSID = %s, pass = %s\n", m_routerSSID.c_str(), m_routerPassword.c_str());
 
 		// SSID to uppercase
 		m_ssid.toUpperCase();
 		m_password = "";
 
-		if (m_routerSSID != "") {
-			LOGERROR3(F("* Add SSID = "), m_routerSSID, F(", PW = "), m_routerPassword);
-			m_wifiMulti.addAP(m_routerSSID.c_str(), m_routerPassword.length() ? m_routerPassword.c_str() : nullptr);
-
-			ESPAsync_wifiManager.setConfigPortalTimeout(120); // If no access point name has been previously entered disable timeout.
-			LOG_PRINTF("Got ESP Self-Stored Credentials. Timeout 120s for Config Portal\n");
+		// if we have been previously connected to some network, specify 2 minute timeout for AP mode
+		if ((manager.WiFi_SSID() != "") || configDataLoaded) {
+			manager.setConfigPortalTimeout(120);
+			LOG_PRINTF("Got ESP Self-Stored WiFiMultiSSID::Credentials. Timeout 120s for Config Portal\n");
 		}
 
-		if (force || m_WM_config.m_forceAp) {
+		if (m_managerConfig.m_forceAp) {
 			LOG_PRINTF("AP forced\n");
-			m_initialConfig = true;
+			shallRunAccessPoint = true;
+		}
+
+		// if we don't have valid credentials, force AP too
+		if (!m_managerConfig.m_credentials->m_ssid[0]) {
+			LOG_PRINTF("No valid WiFi credentials stored, AP forced\n");
+			shallRunAccessPoint = true;
 		}
 
 		if (m_drd->detectDoubleReset()) {
 			// DRD, disable timeout.
-			ESPAsync_wifiManager.setConfigPortalTimeout(0);
+			manager.setConfigPortalTimeout(0);
 			LOG_PRINTF("Open Config Portal without Timeout: Double Reset Detected\n");
-			m_initialConfig = true;
+			shallRunAccessPoint = true;
 		}
 
-		ESPAsync_WMParameter customHostName("hostName",  "host name", m_WM_config.m_hostName,  HOST_NAME_LEN);
-		ESPAsync_wifiManager.addParameter(&customHostName);
+		ESPAsync_WMParameter customHostName("hostName",  "host name", m_managerConfig.m_hostName,  HOST_NAME_LEN);
+		manager.addParameter(&customHostName);
 
-		if (m_initialConfig) {
+		// register event handler for SYSTEM_EVENT_STA_CONNECTED message
+		// (so we can cache details about the last connection)
+		if (!m_wifiEventId) {
+			m_wifiEventId = WiFi.onEvent(
+				[](system_event_id_t event, system_event_info_t info) -> void {
+					WiFiContext::instance().onStationConnected(event, info);
+				},
+				SYSTEM_EVENT_STA_CONNECTED);
+		}
+
+		//
+		// shall we run AccesPoint?
+		//
+
+		if (shallRunAccessPoint) {
 
 			// show orange color indicating we are in setup mode
 			uint32_t color = utils::HSVtoRGB(30, 100, BRIGHTNESS);
 			Display::instance().fadeColors(color, color, color, 16);
 
+			// clear last wifi params
+			memset((void *)&m_lastWiFiParams, 0, sizeof(m_lastWiFiParams));
+			wifiSaveLastParams();
+
 			#if USE_CUSTOM_AP_IP
-			LOG_PRINTF("Starting configuration portal @%s\n", APStaticIP);
+			LOG_PRINTF("Starting configuration portal @%s\n", m_apIpAddress);
 			#else
 			LOG_PRINTF("Starting configuration portal @%s\n", "192.168.4.1");
 			#endif
 
 			// configure our stored static ip config if available
-			ESPAsync_wifiManager.setSTAStaticIPConfig(m_WM_STA_IPconfig);
+			manager.setSTAStaticIPConfig(m_clientConfig);
 			LOG_PRINTF("SSID = %s, PWD = %s\n", m_ssid.c_str(), m_password.length() ? m_password.c_str() : "<none>");
 
-			// Starts an access point
-			if (!ESPAsync_wifiManager.startConfigPortal((const char *)m_ssid.c_str(), m_password.c_str())) {
-				LOG_PRINTF("Not connected to WiFi but continuing anyway.\n");
-			} else {
-				LOG_PRINTF("WiFi connected...yeey :)\n");
-			}
+			// Starts an access point (with disabled watchdog)
+			watchdogOverride([&]{
+				if (!manager.startConfigPortal((const char *)m_ssid.c_str(), m_password.c_str())){
+					LOG_PRINTF("Not connected to WiFi but continuing anyway.\n");
+				} else {
+					LOG_PRINTF("WiFi connected\n");
+				}
+			});
 
-			// Stored	for later usage, from v1.1.0, but clear first
-			memset(&m_WM_config, 0, sizeof(m_WM_config));
+			// copy WiFi configuration from manager to our local structures
+			for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
+				String tempSSID = manager.getSSID(i);
+				String tempPW = manager.getPW(i);
 
-			for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++)
-			{
-				String tempSSID = ESPAsync_wifiManager.getSSID(i);
-				String tempPW = ESPAsync_wifiManager.getPW(i);
+				if (tempSSID.length()) {
+					LOG_PRINTF("Updating WiFi credentials %d:\n", i);
+					LOG_PRINTF("SSID: %s -> %s\n", m_managerConfig.m_credentials[i].m_ssid[0] ? m_managerConfig.m_credentials[i].m_ssid : "<empty>", tempSSID.length() ? tempSSID.c_str() : "<empty>");
+					LOG_PRINTF("PASS: %s -> %s\n\n", PASSWORD_STR(m_managerConfig.m_credentials[i].m_password), PASSWORD_STR(tempPW.c_str()));
 
-				if (strlen(tempSSID.c_str()) < sizeof(m_WM_config.m_wifiCredentials[i].wifi_ssid) - 1)
-					strcpy(m_WM_config.m_wifiCredentials[i].wifi_ssid, tempSSID.c_str());
-				else
-					strncpy(m_WM_config.m_wifiCredentials[i].wifi_ssid, tempSSID.c_str(), sizeof(m_WM_config.m_wifiCredentials[i].wifi_ssid) - 1);
+					if (strlen(tempSSID.c_str()) < sizeof(m_managerConfig.m_credentials[i].m_ssid) - 1)
+						strcpy(m_managerConfig.m_credentials[i].m_ssid, tempSSID.c_str());
+					else
+						strncpy(m_managerConfig.m_credentials[i].m_ssid, tempSSID.c_str(), sizeof(m_managerConfig.m_credentials[i].m_ssid) - 1);
 
-				if (strlen(tempPW.c_str()) < sizeof(m_WM_config.m_wifiCredentials[i].wifi_pw) - 1)
-					strcpy(m_WM_config.m_wifiCredentials[i].wifi_pw, tempPW.c_str());
-				else
-					strncpy(m_WM_config.m_wifiCredentials[i].wifi_pw, tempPW.c_str(), sizeof(m_WM_config.m_wifiCredentials[i].wifi_pw) - 1);
-
-				// Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
-				if ((String(m_WM_config.m_wifiCredentials[i].wifi_ssid) != "") && (strlen(m_WM_config.m_wifiCredentials[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE))
-				{
-					LOGERROR3(F("* Add SSID = "), m_WM_config.m_wifiCredentials[i].wifi_ssid, F(", PW = "), m_WM_config.m_wifiCredentials[i].wifi_pw);
-					m_wifiMulti.addAP(m_WM_config.m_wifiCredentials[i].wifi_ssid, m_WM_config.m_wifiCredentials[i].wifi_pw);
+					if (strlen(tempPW.c_str()) < sizeof(m_managerConfig.m_credentials[i].m_password) - 1)
+						strcpy(m_managerConfig.m_credentials[i].m_password, tempPW.c_str());
+					else
+						strncpy(m_managerConfig.m_credentials[i].m_password, tempPW.c_str(), sizeof(m_managerConfig.m_credentials[i].m_password) - 1);
+				} else {
+					LOG_PRINTF("No new credentials configured at position %d\n", i);
 				}
 			}
 
-			ESPAsync_wifiManager.getSTAStaticIPConfig(m_WM_STA_IPconfig);
+			// read static IP address configuration from manager
+			manager.getSTAStaticIPConfig(m_clientConfig);
+
+			// read new host name from manager
+			strcpy(m_managerConfig.m_hostName, customHostName.getValue());
 
 			// clear force flag
-			m_WM_config.m_forceAp = false;
+			m_managerConfig.m_forceAp = false;
 
-			// read updated parameters
-			strcpy(m_WM_config.m_hostName, customHostName.getValue());
-
+			// store selected configuration
 			wifiSaveConfiguration();
 		}
 
+		//
+		// if needed, load WiFi configuration from persistent memory
+		//
+
+		if (!configDataLoaded) {
+			wifiLoadConfiguration();
+			wifiLoadLastParams();
+		}
+
+		//
+		// add all configured access points
+		//
+
+		for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
+			// Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
+			if ((String(m_managerConfig.m_credentials[i].m_ssid) != "") && (strlen(m_managerConfig.m_credentials[i].m_password) >= MIN_AP_PASSWORD_SIZE)) {
+				LOG_PRINTF("* Add SSID = %s, pw = %s\n", m_managerConfig.m_credentials[i].m_ssid, PASSWORD_STR(m_managerConfig.m_credentials[i].m_password));
+				m_wifiMulti.addAP(m_managerConfig.m_credentials[i].m_ssid, m_managerConfig.m_credentials[i].m_password);
+			}
+		}
+
+		//
+		// connect to configured WiFi network
+		//
+
 		unsigned long startedAt = millis();
 
-		if (!m_initialConfig) {
-			// Load stored data, the addAP ready for MultiWiFi reconnection
-			if (!configDataLoaded)
-				wifiLoadConfiguration();
-
-			for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
-				// Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
-				if ((String(m_WM_config.m_wifiCredentials[i].wifi_ssid) != "") && (strlen(m_WM_config.m_wifiCredentials[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE)) {
-					LOGERROR3(F("* Add SSID = "), m_WM_config.m_wifiCredentials[i].wifi_ssid, F(", PW = "), m_WM_config.m_wifiCredentials[i].wifi_pw);
-					m_wifiMulti.addAP(m_WM_config.m_wifiCredentials[i].wifi_ssid, m_WM_config.m_wifiCredentials[i].wifi_pw);
-				}
-			}
-
-			if (WiFi.status() != WL_CONNECTED) {
-				LOG_PRINTF("ConnectMultiWiFi in setup\n");
-				connectMultiWiFi();
-			}
+		if (WiFi.status() != WL_CONNECTED) {
+			LOG_PRINTF("ConnectMultiWiFi in setup\n");
+			connectMultiWiFi();
 		}
 
 		LOG_PRINTF("After waiting %f secs more in setup(), connection result is \n", (float)(millis() - startedAt) / 1000);
-
-		if (WiFi.status() == WL_CONNECTED) {
-			LOG_PRINTF("connected. Local IP: %s\n", WiFi.localIP().toString().c_str());
-		}
-		else {
-			LOG_PRINTF(ESPAsync_wifiManager.getStatus(WiFi.status()));
-		}
 
 		// we can stop double reset detector
 		if (m_drd) {
 			m_drd->stop();
 		}
 
-		// from now on we are connected
-		m_connected = true;
+		if (WiFi.status() == WL_CONNECTED) {
+			// from now on we are connected
+			m_connected = true;
+			LOG_PRINTF("Connected. Local IP: %s\n", WiFi.localIP().toString().c_str());
+		}
+		else {
+			LOG_PRINTF(manager.getStatus(WiFi.status()));
+		}
 	}
 
 	bool connected()
@@ -530,6 +639,11 @@ public:
 		return true;
 	}
 
+	AsyncWebServer *httpServer()
+	{
+		return &m_httpServer;
+	}
+
 	void loop()
 	{
 		while (1) {
@@ -541,15 +655,15 @@ public:
 			//
 
 			if (m_shallReconfigure) {
-				LOG_PRINTF("Reconfiguration initiated!\n");
+				LOG_PRINTF("WiFi reconfiguration initiated!\n");
 
 				// force ap in settings
-				m_WM_config.m_forceAp = true;
+				m_managerConfig.m_forceAp = true;
 				wifiSaveConfiguration();
 
 				// disconnect from wifi
 				WiFi.disconnect();
-
+#if RESET_WHEN_RECONFIGURING_WIFI
 				// and reboot the board
 				watchdogScheduleReboot();
 
@@ -557,14 +671,22 @@ public:
 				while (1) {
 					delay(100);
 				}
+#else
+				wifiStartManager();
+#endif
+				LOG_PRINTF("WiFi reconfiguration finished\n");
+				m_shallReconfigure = false;
 			}
 
 			if (m_shallReset) {
+				LOG_PRINTF("WiFi reset initiated!\n");
+
 				// erase settings
 				wifiEraseConfiguration();
+
 				// disconnect from wifi and erase credentials
 				WiFi.disconnect(false, true);
-
+#if RESET_WHEN_RECONFIGURING_WIFI
 				// and reboot the board
 				watchdogScheduleReboot();
 
@@ -572,6 +694,11 @@ public:
 				while (1) {
 					delay(100);
 				}
+#else
+				wifiStartManager();
+#endif
+				LOG_PRINTF("WiFi reset finished\n");
+				m_shallReset = false;
 			}
 
 			// Call the double reset detector loop method every so often,
@@ -588,32 +715,28 @@ public:
 	}
 };
 
-static WifiContext g_wifiCtx;
-
 void wifiTask(void *pvParameters __attribute__((unused)))
 {
 	// init
-	watchdogEnable(false);
-	g_wifiCtx.wifiSetup();
-	watchdogEnable(true);
+	WiFiContext::instance().wifiSetup();
 
 	// infinite loop
-	g_wifiCtx.loop();
+	WiFiContext::instance().loop();
 }
 
 bool wifiReconfigure()
 {
-	return g_wifiCtx.reconfigure();
+	return WiFiContext::instance().reconfigure();
 }
 
 bool wifiReset()
 {
-	return g_wifiCtx.reset();;
+	return WiFiContext::instance().reset();
 }
 
 bool wifiIsConnected()
 {
-	return g_wifiCtx.connected();
+	return WiFiContext::instance().connected();
 }
 
 void wifiWaitForConnection()
@@ -621,6 +744,11 @@ void wifiWaitForConnection()
 	while (!wifiIsConnected()) {
 		delay(500);
 	}
+}
+
+AsyncWebServer *wifiGetHttpServer()
+{
+	return WiFiContext::instance().httpServer();
 }
 
 String wifiHostName()

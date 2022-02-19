@@ -36,9 +36,13 @@ private:
 #else
 	struct led_state m_ledState;
 #endif
+	// regular colors
 	uint32_t m_colors[NUM_LEDS] = {0};
+	// high priority colors
+	uint32_t m_hpColors[NUM_LEDS] = {0};
 	uint8_t m_brightness;
 
+	bool m_highPriority = false;
 	bool m_booting = true;
 
 	static void displayTask(void * parameter)
@@ -190,13 +194,18 @@ public:
 		});
 	}
 
-	void setColors(uint32_t led1, uint32_t led2, uint32_t led3, int brightness = -1)
+	void setColors(uint32_t led1, uint32_t led2, uint32_t led3, int brightness = -1, bool isHighPriority = false)
 	{
 		executeAtomically([=]{
 			m_colors[PM_LED] = led1;
 			m_colors[HUM_LED] = led2;
 			m_colors[CO2_LED] = led3;
 
+			// ignore non-priority color requests when
+			// high priority mode is enabled
+			if (m_highPriority && !isHighPriority) {
+				return;
+			}
 #if USE_ADAFRUIT_NEOPIXEL
 			if (brightness >= 0)
 				m_rgbWS.setBrightness(brightness);
@@ -221,10 +230,13 @@ public:
 		});
 	}
 
-	uint32_t getColor(unsigned int id)
+	uint32_t getColor(unsigned int id, const bool &highPriority = false)
 	{
 		if (id < NUM_LEDS) {
-			return m_colors[id];
+			if (!highPriority)
+				return m_colors[id];
+			else
+				return m_hpColors[id];
 		}
 
 		return 0;
@@ -302,6 +314,47 @@ public:
 				uint32_t c3 = mixColors(prevCo2Color, co2Color, i / (float)steps);
 
 				setColors(c1, c2, c3, m_brightness);
+				delay(10);
+			}
+		});
+	}
+
+	virtual void highPriorityColor(uint32_t color, const bool &enable)
+	{
+		bootFinished();
+		int steps = 16;
+
+		executeAtomically([=]{
+			uint32_t prevPmColor;
+			uint32_t prevHumColor;
+			uint32_t prevCo2Color;
+
+			uint32_t newPmColor;
+			uint32_t newHumColor;
+			uint32_t newCo2Color;
+
+			m_highPriority = enable;
+
+			if (enable) {
+				m_hpColors[PM_LED] = color;
+				m_hpColors[HUM_LED] = color;
+				m_hpColors[CO2_LED] = color;
+			}
+
+			prevPmColor = getColor(PM_LED, !enable);
+			prevHumColor = getColor(HUM_LED, !enable);
+			prevCo2Color = getColor(CO2_LED, !enable);
+
+			newPmColor = getColor(PM_LED, enable);
+			newHumColor = getColor(HUM_LED, enable);
+			newCo2Color = getColor(CO2_LED, enable);
+
+			for (int i = 0; i <= steps; i++) {
+				uint32_t c1 = mixColors(prevPmColor, newPmColor, i / (float)steps);
+				uint32_t c2 = mixColors(prevHumColor, newHumColor, i / (float)steps);
+				uint32_t c3 = mixColors(prevCo2Color, newCo2Color, i / (float)steps);
+
+				setColors(c1, c2, c3, m_brightness, enable);
 				delay(10);
 			}
 		});

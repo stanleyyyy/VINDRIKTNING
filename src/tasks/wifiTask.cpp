@@ -499,8 +499,7 @@ public:
 		if (shallRunAccessPoint) {
 
 			// show orange color indicating we are in setup mode
-			uint32_t color = utils::HSVtoRGB(30, 100, BRIGHTNESS);
-			Display::instance().fadeColors(color, color, color, 16);
+			Display::instance().highPriorityColor(utils::HSVtoRGB(30, 100, BRIGHTNESS), true);
 
 			// clear last wifi params
 			memset((void *)&m_lastWiFiParams, 0, sizeof(m_lastWiFiParams));
@@ -560,6 +559,9 @@ public:
 
 			// store selected configuration
 			wifiSaveConfiguration();
+
+			// hide AP notification
+			Display::instance().highPriorityColor(utils::HSVtoRGB(30, 100, BRIGHTNESS), false);
 		}
 
 		//

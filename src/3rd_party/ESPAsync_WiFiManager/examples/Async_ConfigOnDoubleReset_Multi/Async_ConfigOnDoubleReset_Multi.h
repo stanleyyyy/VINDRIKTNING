@@ -238,7 +238,9 @@ typedef struct
   String wifi_pw;
 }  WiFi_Credentials_String;
 
+#ifndef NUM_WIFI_CREDENTIALS
 #define NUM_WIFI_CREDENTIALS      2
+#endif
 
 // Assuming max 49 chars
 #define TZNAME_MAX_LEN            50

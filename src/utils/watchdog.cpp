@@ -79,9 +79,11 @@ void watchdogReset()
 	}
 }
 
-void watchdogEnable(const bool &enable)
+bool watchdogEnable(const bool &enable)
 {
+	bool ret = false;
 	if (xSemaphoreTake(mutex, portMAX_DELAY ) == pdTRUE) {
+		ret = watchdogEnabled;
 		watchdogEnabled = enable;
 
 		// if re-enabled, reset it
@@ -90,6 +92,17 @@ void watchdogEnable(const bool &enable)
 				watchdogResetTs = millis();
 		}
 		xSemaphoreGive(mutex);
+	}
+
+	return ret;
+}
+
+void watchdogOverride(std::function<void(void)> fn)
+{
+	if (fn) {
+		bool wasEnabled = watchdogEnable(false);
+		fn();
+		watchdogEnable(wasEnabled);
 	}
 }
 
@@ -105,7 +118,7 @@ void watchdogScheduleReboot()
 // Watchdog task
 //
 
-uint32_t timeToReset()
+uint32_t watchdogTimeToReset()
 {
 	return PERIODIC_RESET_TIMEOUT - (millis() - periodicResetTs);
 }

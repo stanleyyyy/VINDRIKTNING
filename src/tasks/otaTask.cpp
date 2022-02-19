@@ -8,8 +8,6 @@
 
 void otaTask(void * parameter)
 {
-	LOG_PRINTF("Starting OTA task\n");
-
 	// wait until the network is connected
 	wifiWaitForConnection();
 	LOG_PRINTF("WiFi available, initializing OTA service\n");

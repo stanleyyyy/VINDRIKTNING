@@ -6,7 +6,6 @@
 
 #include "WiFi.h"
 #include "config.h"
-#include "secrets.h"
 #include "utils.h"
 #include "watchdog.h"
 #include "display.h"

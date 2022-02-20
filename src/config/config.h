@@ -86,7 +86,7 @@
 #define WATCHDOG_TIMEOUT 5000
 
 //
-// Periodic reset every 8 hours
+// Periodic reset every 24 hours
 //
 
 #define PERIODIC_RESET_TIMEOUT (24 * 60 * 60 * 1000)

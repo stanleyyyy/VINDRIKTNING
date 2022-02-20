@@ -4,7 +4,7 @@
 #include <Wire.h>
 
 #include "sensorTask.h"
-#include "../3rd_party/pm1006/pm1006.h"
+#include "pm1006.h"
 
 #include "config.h"
 #include "utils.h"

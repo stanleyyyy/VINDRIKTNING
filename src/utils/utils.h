@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 #include "config/config.h"
-#include "../3rd_party/TelnetSpy/TelnetSpy.h"
+#include "TelnetSpy.h"
 
 // create instance of telnet/serial wrapper
 extern TelnetSpy SerialAndTelnet;

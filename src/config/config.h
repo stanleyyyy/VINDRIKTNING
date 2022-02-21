@@ -56,7 +56,7 @@
 #define HTTP_PORT 80
 #define RESET_WHEN_RECONFIGURING_WIFI 0		// set to 1 to reconfigure wifi via esp32 reset
 #define PRINT_PASSWORDS 0					// set to 1 to show plaintext passwords in console
-#define HOST_NAME_BASE	"Esp32-Vindriktning"
+#define HOST_NAME_BASE	"Vindriktning"
 
 #if ESP32
 	// For ESP32, this better be 0 to shorten the connect time.

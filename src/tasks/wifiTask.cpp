@@ -87,7 +87,7 @@ public:
 	WiFiContext()
 		: m_httpServer(HTTP_PORT)
 	{
-		m_ssid = "ESP_" + String((uint32_t)ESP.getEfuseMac(), HEX);
+		m_ssid = String(HOST_NAME_BASE) + String("-") + String((uint32_t)ESP.getEfuseMac(), HEX);
 		m_drd = NULL;
 		m_shallReconfigure = false;
 		m_shallReset = false;
@@ -468,8 +468,6 @@ public:
 		manager.setCORSHeader("Your Access-Control-Allow-Origin");
 		#endif
 
-		// SSID to uppercase
-		m_ssid.toUpperCase();
 		m_password = "";
 
 		// if we have been previously connected to some network, specify 2 minute timeout for AP mode

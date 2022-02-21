@@ -267,6 +267,19 @@ public:
 			file.readBytes((char *)&m_lastWiFiParams, sizeof(m_lastWiFiParams));
 			file.close();
 			LOG_PRINTF("Last params loading succeeded\n");
+
+			// sometimes it can happen that last params don't contain any password
+			// (this can happen when the connection is completed before the AP wizard finishes)
+			// In that case try to fill the password by matching the SSID:
+			if (!m_lastWiFiParams.m_credentials.m_password[0]) {
+				for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++) {
+					if (String(m_managerConfig.m_credentials[i].m_ssid) == String(m_lastWiFiParams.m_credentials.m_ssid)) {
+						strcpy(m_lastWiFiParams.m_credentials.m_password, m_managerConfig.m_credentials[i].m_password);
+						break;
+					}
+				}
+			}
+
 			displayLastWifiParams(m_lastWiFiParams);
 			return true;
 		} else {
@@ -362,6 +375,8 @@ public:
 	{
 		LOG_PRINTF("Starting Wifi Manager using SPIFFS on %s %s %s\n", ARDUINO_BOARD, ESP_ASYNC_WIFIMANAGER_VERSION, ESP_DOUBLE_RESET_DETECTOR_VERSION);
 
+		// disable watchdgog as formatting may take a long time
+		watchdogEnable(false);
 		if (!SPIFFS.begin(true)) {
 			LOG_PRINTF("SPIFFS/LittleFS failed! Already tried formatting.\n");
 
@@ -369,12 +384,15 @@ public:
 				// prevents debug info from the library to hide err message.
 				delay(100);
 				LOG_PRINTF("SPIFFS failed!. Please use LittleFS or EEPROM. Stay forever\n");
+				watchdogEnable(true);
 
 				while (true) {
 					delay(1);
 				}
 			}
 		}
+		// re-enable watchdog
+		watchdogEnable(true);
 
 		File root = SPIFFS.open("/");
 		File file = root.openNextFile();

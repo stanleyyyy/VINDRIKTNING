@@ -2,6 +2,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <SensirionI2CScd4x.h>
 #include <Wire.h>
+#include <Preferences.h>
 
 #include "sensorTask.h"
 #include "pm1006.h"
@@ -50,6 +51,7 @@ private:
 	float m_humidity;
 #endif
 	uint16_t m_pm2_5;
+	bool m_fanEnabled;
 
 public:
 	Context()
@@ -66,6 +68,7 @@ public:
 		m_humidity = 0;
 #endif
 		m_pm2_5 = 0;
+		m_fanEnabled = true;
 
 		// create semaphore for watchdog
 		m_mutex = xSemaphoreCreateMutex();
@@ -86,6 +89,17 @@ public:
 			LOG_PRINTF("QMP6988 sensor failed to initialize!\n");
 		}
 #endif
+
+		pinMode(PIN_FAN, OUTPUT);
+
+		// read fan mode
+		Preferences preferences;
+		preferences.begin(PREFERENCES_ID, false);
+		m_fanEnabled = preferences.getUInt("fan", 1) ? true : false;
+		preferences.end();
+
+		LOG_PRINTF("Fan is %s\n", m_fanEnabled ? "enabled" : "disabled");
+		digitalWrite(PIN_FAN, m_fanEnabled ? HIGH : LOW);
 	}
 
 	PM1006& pm1006() { return m_pm1006; }
@@ -120,6 +134,21 @@ public:
 				fn();
 			xSemaphoreGiveRecursive(m_mutex);
 		}
+	}
+
+	void sensorFanMode(const bool &enabled)
+	{
+		executeAtomically([&]{
+			m_fanEnabled = enabled;
+
+			LOG_PRINTF("Fan is %s\n", m_fanEnabled ? "enabled" : "disabled");
+			digitalWrite(PIN_FAN, m_fanEnabled ? HIGH : LOW);
+
+			Preferences preferences;
+			preferences.begin(PREFERENCES_ID, false);
+			preferences.putUInt("fan", m_fanEnabled ? 1 : 0);
+			preferences.end();
+		});
 	}
 
 #if (USE_CO2_SENSOR == 1)
@@ -208,16 +237,11 @@ void sensorTask(void * parameter)
 {
 	LOG_PRINTF("Starting Sensor task\n");
 
-	pinMode(PIN_FAN, OUTPUT);
-
 	// initialize UART to access the PM1006 sensor
 	Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
 
 	// init context
 	g_ctx.init();
-
-	digitalWrite(PIN_FAN, HIGH);
-	LOG_PRINTF("Fan ON\n");
 
 	// give 10 seconds for initial measurement
 	delay(10000);
@@ -361,6 +385,10 @@ void sensorTask(void * parameter)
 	}
 }
 
+void sensorFanMode(const bool &enabled)
+{
+	g_ctx.sensorFanMode(enabled);
+}
 
 #if (USE_CO2_SENSOR == 1)
 bool lastSensorData(uint16_t &pm2_5, float &temperature, float &humidity, uint16_t &co2)

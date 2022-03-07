@@ -119,6 +119,8 @@ public:
 	#endif
 		"Click <a href=\"/rssi\">here</a> to get RSSI<br><br>"
 
+		"Click <a href=\"/fan?value=on\">here</a> to turn on the Fan<br>"
+		"Click <a href=\"/fan?value=off\">here</a> to turn off the Fan<br><br>"
 		"Click <a href=\"/led?value=100\">here</a> to set LED brightness to 100<br>"
 		"Click <a href=\"/led?value=10\">here</a> to set LED brightness to 10<br>"
 		"Click <a href=\"/led?value=0\">here</a> to set LED brightness to 0<br>"
@@ -276,6 +278,24 @@ public:
 		}
 	}
 
+	void fanHandler(AsyncWebServerRequest *request)
+	{
+		StaticJsonDocument<OUTPUT_JSON_BUFFER_SIZE> doc;
+
+		if (request->hasParam("value")) {
+			String value = request->getParam("value")->value().c_str();
+			LOG_PRINTF("FAN value: %d\n", value.c_str());
+			if (value == "on") {
+				sensorFanMode(true);
+			} else {
+				sensorFanMode(false);
+			}
+			request->redirect("/index");
+		} else {
+			request->send(404, "text/plain", "Not found");
+		}
+	}
+
 	#if DEBUG_LEDS
 	void ledColorHandler(AsyncWebServerRequest *request)
 	{
@@ -324,6 +344,10 @@ public:
 
 				server->on("/led", HTTP_GET, [=](AsyncWebServerRequest *request){
 					ledHandler(request);
+				});
+
+				server->on("/fan", HTTP_GET, [=](AsyncWebServerRequest *request){
+					fanHandler(request);
 				});
 
 #if DEBUG_LEDS

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include <ESPAsyncWebserver.h>
+#include <AsyncElegantOTA.h>
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 
@@ -130,6 +131,8 @@ public:
 		"Click <a href=\"/ledColor?value=65280\">here</a> to set LED color to 0x0000FF00<br>"
 		"Click <a href=\"/ledColor?value=255\">here</a> to set LED color to 0x000000FF<br>"
 	#endif
+		"<br>"
+		"Click <a href=\"/update\">here</a> to update the device<br>"
 		"<br>"
 		"Click <a href=\"/reconfigureWifi\">here</a> to reconfigure Wifi<br><br>"
 		"Click <a href=\"/resetWifi\">here</a> to erase all Wifi settings<br>"
@@ -372,6 +375,10 @@ public:
 					request->send(404, "text/plain", "Not found");
 				});
 
+				// start webserver based OTA support
+				AsyncElegantOTA.begin(server);
+
+				// start webserver
 				server->begin();
 
 				if (!MDNS.begin(wifiHostName().c_str())) {
